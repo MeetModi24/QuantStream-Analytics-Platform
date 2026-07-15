@@ -1,0 +1,25 @@
+spring:
+  application:
+    name: data-generator
+  main:
+    web-application-type: none
+
+  kafka:
+    bootstrap-servers: localhost:9092
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      acks: all
+      retries: 3
+
+logging:
+  level:
+    com.quantstream: DEBUG
+    org.springframework: INFO
+    org.apache.kafka: WARN
+
+market:
+  data:
+    token-source: classpath:tokens.csv
+    enabled-symbols: AAPL,MSFT,GOOGL,TSLA,AMZN,BTC,ETH,SOL,AVAX,MATIC
+    max-messages-per-day: 10000

@@ -57,7 +57,7 @@ data-generator/
    ```
    Project:       Maven
    Language:      Java
-   Spring Boot:   3.3.5 (or latest 3.3.x)
+   Spring Boot:   3.5.0 (or latest stable version)
    
    Group:         com.quantstream
    Artifact:      data-generator
@@ -92,18 +92,18 @@ cd /Users/mhiteshkumar/QuantStream
 curl https://start.spring.io/starter.zip \
   -d type=maven-project \
   -d language=java \
-  -d bootVersion=3.3.5 \
+  -d bootVersion=3.5.0 \
   -d groupId=com.quantstream \
   -d artifactId=data-generator \
-  -d name=Data\ Generator \
-  -d description=Market\ data\ generator\ using\ Geometric\ Brownian\ Motion \
+  -d name="Data Generator" \
+  -d description="Market data generator using Geometric Brownian Motion" \
   -d packageName=com.quantstream.generator \
   -d packaging=jar \
   -d javaVersion=21 \
   -d dependencies=kafka,lombok \
   -o data-generator.zip
 
-unzip data-generator.zip -d data-generator
+unzip data-generator.zip
 ```
 
 ---
@@ -162,7 +162,7 @@ unzip data-generator.zip -d data-generator
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.3.5</version>
+        <version>3.5.0</version>
         <relativePath/>
     </parent>
     
@@ -565,7 +565,7 @@ mvn spring-boot:run
  \\/  ___)| |_)| | | | | || (_| |  ) ) ) )
   '  |____| .__|_| |_|_| |_\__, | / / / /
  =========|_|==============|___/=/_/_/_/
- :: Spring Boot ::                (v3.3.5)
+ :: Spring Boot ::                (v3.5.0)
 
 2024-07-12 10:00:00 INFO  c.q.g.GeneratorApplication : Starting GeneratorApplication
 2024-07-12 10:00:02 INFO  c.q.g.GeneratorApplication : Started GeneratorApplication in 2.5 seconds

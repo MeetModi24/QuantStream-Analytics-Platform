@@ -1,0 +1,68 @@
+services:
+  # 1. Zookeeper (Kafka metadata manager)
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.1
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - quantstream-network
+
+  # 2. Kafka (Message broker)
+  kafka:
+    image: confluentinc/cp-kafka:7.6.1
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+    networks:
+      - quantstream-network
+
+  # 3. QuestDB (Time-series database)
+  questdb:
+    image: questdb/questdb:8.1.2
+    container_name: questdb
+    ports:
+      - "9000:9000"  # Web console
+      - "8812:8812"  # PostgreSQL wire protocol
+      - "9009:9009"  # InfluxDB line protocol (not used in Phase 1)
+    volumes:
+      - questdb-data:/var/lib/questdb
+    networks:
+      - quantstream-network
+
+  # 4. Kafka UI (Web interface for Kafka)
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    depends_on:
+      - kafka
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+    networks:
+      - quantstream-network
+
+# Network for all services to communicate
+networks:
+  quantstream-network:
+    driver: bridge
+
+# Persistent storage for QuestDB
+volumes:
+  questdb-data:
