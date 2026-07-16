@@ -2,13 +2,13 @@
 
 ## What You're Building
 
-**QuestDB connection setup** that enables your Spring Boot consumer to:
+**QuestDB connection setup with Spring JdbcTemplate** that enables your Spring Boot consumer to:
 1. Connect to QuestDB using PostgreSQL wire protocol
-2. Write tick data to the `ticks` table
-3. Use JdbcTemplate for simple, efficient inserts
-4. Handle connection pooling automatically
+2. Custom configuration to handle QuestDB limitations (no transaction support)
+3. Use JdbcTemplate for direct SQL execution
+4. HikariCP connection pooling with QuestDB-specific settings
 
-**This guide sets up the database layer** — the foundation for persisting market data.
+**This guide sets up the database layer** — the foundation for persisting market data using JDBC instead of JPA (due to QuestDB's limited PostgreSQL compatibility).
 
 ---
 
@@ -50,7 +50,7 @@
 
 **Port 8812 (PostgreSQL wire protocol):**
 ```
-jdbc:postgresql://localhost:8812/questdb
+jdbc:postgresql://localhost:8812/qdb
 ```
 
 Use this for:
@@ -80,16 +80,17 @@ jdbc:postgresql://host:port/database?user=username&password=password
 
 **For QuestDB:**
 ```
-jdbc:postgresql://localhost:8812/questdb?user=admin&password=quest
+jdbc:postgresql://localhost:8812/qdb
 ```
 
 **Breaking it down:**
 - `jdbc:postgresql://` — JDBC protocol (PostgreSQL driver)
 - `localhost` — Database host (our Docker container)
 - `8812` — PostgreSQL wire protocol port
-- `questdb` — Database name (always "questdb")
-- `user=admin` — Default username (from Docker Compose)
-- `password=quest` — Default password (from Docker Compose)
+- `qdb` — Database name (QuestDB's default database)
+- Username/password specified separately in Spring config (admin/quest)
+
+**Note:** QuestDB uses `qdb` as the default database name, not `questdb`
 
 **Note:** For production, change default credentials! We use defaults for local development only.
 
@@ -110,235 +111,400 @@ jdbc:postgresql://localhost:8812/questdb?user=admin&password=quest
 ```yaml
 spring:
   application:
-    name: data-consumer
+    name: database-consumer
   
-  # Kafka Consumer Configuration
   kafka:
     bootstrap-servers: localhost:9092
     consumer:
-      group-id: market-data-consumer-group
+      group-id: questdb-consumer-group
       auto-offset-reset: earliest
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
       properties:
         spring.json.trusted.packages: com.quantstream.consumer.model
-  
-  # QuestDB Database Configuration
-  datasource:
-    url: jdbc:postgresql://localhost:8812/questdb?user=admin&password=quest
-    driver-class-name: org.postgresql.Driver
-    hikari:
-      maximum-pool-size: 5
-      minimum-idle: 2
-      connection-timeout: 30000
-      idle-timeout: 600000
-      max-lifetime: 1800000
+    listener:
+      ack-mode: manual
 
-# Logging Configuration
+server:
+  port: 8082
+
 logging:
   level:
     com.quantstream: DEBUG
     org.springframework: INFO
     org.apache.kafka: WARN
-    org.postgresql: WARN
 ```
+
+**Note:** Unlike typical Spring Boot apps, we do NOT configure `spring.datasource` or `spring.jpa` properties here because QuestDB has limited PostgreSQL compatibility. Instead, we use a custom `QuestDBConfig.java` class (explained below).
 
 ---
 
-## Understanding JDBC Connection Properties
+## Understanding QuestDB Limitations
 
-### spring.datasource.url
+### Why NOT Spring Data JPA?
 
-**Format:**
-```yaml
-url: jdbc:postgresql://localhost:8812/questdb?user=admin&password=quest
+**QuestDB is NOT fully PostgreSQL compatible** despite using the PostgreSQL wire protocol. Key limitations:
+
+**1. No Transaction Support**
+- No `BEGIN`, `COMMIT`, `ROLLBACK` statements
+- No savepoints
+- No isolation levels (READ COMMITTED, SERIALIZABLE, etc.)
+- All writes are auto-committed immediately
+
+**2. No Schema DDL via JPA**
+- Hibernate's `ddl-auto` won't work
+- Must create tables manually via QuestDB console
+- QuestDB uses custom syntax: `SYMBOL`, `timestamp(column)`, `PARTITION BY`
+
+**3. Limited SQL Support**
+- No foreign keys
+- No stored procedures
+- No triggers
+- No joins in some contexts
+
+**Why this matters for Spring:**
+- **Spring Data JPA requires transaction support** → Fails with QuestDB
+- **Hibernate expects standard PostgreSQL** → Errors on unsupported features
+- **Spring Boot auto-configuration assumes full compatibility** → Must be overridden
+
+**Solution: Use JdbcTemplate instead of JPA**
+- Direct SQL execution (no ORM)
+- No transaction requirements
+- Full control over SQL dialect
+- Works with QuestDB's PostgreSQL wire protocol
+
+---
+
+## Creating Custom QuestDBConfig.java
+
+### Why Custom Configuration is Required
+
+**Spring Boot auto-configuration fails with QuestDB because:**
+1. HikariCP tries to set transaction isolation level → QuestDB doesn't support
+2. Spring Boot enables transactions by default → QuestDB doesn't support
+3. Connection validation queries may use unsupported features
+
+**Solution: Manual DataSource configuration with QuestDB-specific settings**
+
+### Step 1: Create Config Class
+
+**Location:** `src/main/java/com/quantstream/consumer/config/QuestDBConfig.java`
+
+**Full configuration:**
+
+```java
+package com.quantstream.consumer.config;
+
+import com.zaxxer.hikari.HikariConfig;
+import com.zaxxer.hikari.HikariDataSource;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.jdbc.core.JdbcTemplate;
+
+import javax.sql.DataSource;
+
+/**
+ * QuestDB-specific configuration.
+ * <p>
+ * QuestDB has limited PostgreSQL compatibility - it doesn't support:
+ * - Transaction isolation levels
+ * - BEGIN/COMMIT/ROLLBACK (no transactions)
+ * - Savepoints
+ * <p>
+ * This configuration bypasses HikariCP's transaction checks.
+ */
+@Configuration
+public class QuestDBConfig {
+
+    @Bean
+    public DataSource dataSource() {
+        HikariConfig config = new HikariConfig();
+        config.setJdbcUrl("jdbc:postgresql://localhost:8812/qdb");
+        config.setUsername("admin");
+        config.setPassword("quest");
+        config.setDriverClassName("org.postgresql.Driver");
+
+        // Bypass transaction isolation level detection (QuestDB doesn't support it)
+        config.setAutoCommit(true);
+        config.setConnectionInitSql("SELECT 1");
+        config.setConnectionTestQuery("SELECT 1");
+
+        // Don't set transaction isolation (causes errors with QuestDB)
+        config.setTransactionIsolation(null);
+
+        // Connection pool settings
+        config.setMaximumPoolSize(10);
+        config.setMinimumIdle(2);
+        config.setConnectionTimeout(10000);
+
+        return new HikariDataSource(config);
+    }
+
+    @Bean
+    public JdbcTemplate jdbcTemplate(DataSource dataSource) {
+        return new JdbcTemplate(dataSource);
+    }
+}
 ```
 
-**Parts explained:**
+### Understanding the Configuration
 
-**jdbc:postgresql://**
-- JDBC subprotocol
-- Tells Java to use PostgreSQL driver
+**@Configuration**
+```java
+@Configuration
+public class QuestDBConfig {
+```
+- Marks this as a Spring configuration class
+- Spring scans for @Bean methods and creates beans at startup
 
-**localhost:8812**
-- Host: `localhost` (QuestDB running in Docker)
-- Port: `8812` (PostgreSQL wire protocol)
+**@Bean public DataSource dataSource()**
+```java
+@Bean
+public DataSource dataSource() {
+    HikariConfig config = new HikariConfig();
+    // ...
+    return new HikariDataSource(config);
+}
+```
+- Creates DataSource bean (connection pool)
+- Overrides Spring Boot's auto-configured DataSource
+- Returns HikariCP connection pool (industry-standard, high-performance)
 
-**Why not `localhost:9000`?**
-- 9000 is HTTP/web console port
-- JDBC needs wire protocol on 8812
+**JDBC URL**
+```java
+config.setJdbcUrl("jdbc:postgresql://localhost:8812/qdb");
+```
+- Same format as before: `jdbc:postgresql://host:port/database`
+- Uses PostgreSQL JDBC driver to connect to QuestDB
+- Port 8812 = PostgreSQL wire protocol
 
-**questdb**
-- Database name (always "questdb", not configurable)
+**Transaction Isolation = null**
+```java
+config.setTransactionIsolation(null);
+```
+- **CRITICAL:** Prevents HikariCP from setting isolation level
+- Without this, QuestDB throws: `ERROR: SET TRANSACTION ISOLATION LEVEL not supported`
+- Setting to `null` tells HikariCP "don't try to set isolation level"
 
-**?user=admin&password=quest**
-- Query parameters for authentication
-- Default credentials from Docker Compose
+**Auto-commit = true**
+```java
+config.setAutoCommit(true);
+```
+- Every SQL statement commits immediately
+- Required because QuestDB doesn't support transactions
+- Matches QuestDB's behavior (no BEGIN/COMMIT)
 
-**Alternative format (separate properties):**
-```yaml
-spring:
-  datasource:
-    url: jdbc:postgresql://localhost:8812/questdb
-    username: admin
-    password: quest
+**Connection Test Query**
+```java
+config.setConnectionInitSql("SELECT 1");
+config.setConnectionTestQuery("SELECT 1");
+```
+- Simple query to verify connection works
+- `SELECT 1` is universally supported (PostgreSQL, QuestDB, etc.)
+- HikariCP runs this when borrowing connections from pool
+
+**Connection Pool Settings**
+```java
+config.setMaximumPoolSize(10);
+config.setMinimumIdle(2);
+config.setConnectionTimeout(10000);
+```
+- **MaximumPoolSize(10):** At most 10 concurrent database connections
+- **MinimumIdle(2):** Keep 2 connections ready at all times
+- **ConnectionTimeout(10000):** Wait up to 10 seconds for available connection
+
+**@Bean public JdbcTemplate jdbcTemplate()**
+```java
+@Bean
+public JdbcTemplate jdbcTemplate(DataSource dataSource) {
+    return new JdbcTemplate(dataSource);
+}
+```
+- Creates JdbcTemplate bean using our DataSource
+- JdbcTemplate = Spring's template class for JDBC operations
+- Simplifies JDBC code (no manual connection management)
+
+---
+
+## Understanding JdbcTemplate vs JPA
+
+### What is JdbcTemplate?
+
+**JdbcTemplate** is Spring's utility class for executing SQL:
+- Execute raw SQL strings (INSERT, SELECT, UPDATE, DELETE)
+- Map ResultSets to Java objects
+- Handle connection management automatically
+- No ORM overhead (no entity mappings, no proxies)
+
+**Basic usage:**
+```java
+@Autowired
+private JdbcTemplate jdbcTemplate;
+
+public void saveTick(Tick tick) {
+    String sql = "INSERT INTO ticks (symbol, price, volume, timestamp) VALUES (?, ?, ?, ?)";
+    jdbcTemplate.update(sql, tick.getSymbol(), tick.getPrice(), tick.getVolume(), tick.getTimestamp());
+}
 ```
 
-Both work identically. We embed credentials in URL for simplicity.
+**Key difference from JPA:**
+- **You write SQL manually** (not auto-generated from method names)
+- **No @Entity annotations** (POJOs with getters/setters)
+- **No repository interfaces** (service layer directly uses JdbcTemplate)
 
-### spring.datasource.driver-class-name
+### Why JdbcTemplate for QuestDB?
+
+**Advantages over JPA:**
+
+**1. No transaction requirements**
+- JPA/Hibernate expects transactions
+- QuestDB doesn't support transactions
+- JdbcTemplate works fine without transactions
+
+**2. Direct SQL control**
+- QuestDB uses custom syntax: `SYMBOL`, `timestamp(timestamp)`
+- JPA would generate standard PostgreSQL DDL (incompatible)
+- JdbcTemplate lets you write QuestDB-specific SQL
+
+**3. Simpler for time-series workloads**
+- Most operations are INSERT (append-only writes)
+- Simple SELECT queries by time range
+- No complex joins or relationships
+- JdbcTemplate is sufficient, JPA is overkill
+
+**4. Better performance**
+- No ORM overhead (no entity proxies, lazy loading, etc.)
+- Direct JDBC calls (minimal abstraction)
+- Less memory usage (no persistent context)
+
+**Trade-offs:**
+
+**Lose:**
+- Auto-generated repository methods (`findBySymbol`, etc.)
+- Type-safe queries (no compile-time checking of column names)
+- Object-relational mapping (manual ResultSet → object conversion)
+
+**Gain:**
+- Works with QuestDB's limitations
+- Simpler mental model (just SQL)
+- Better performance for high-throughput inserts
+
+---
+
+## Understanding spring.datasource properties
+
+**Why NOT in application.yml?**
+- We don't use `spring.datasource` properties
+- QuestDB needs custom configuration (transaction isolation = null)
+- Spring Boot auto-configuration would fail with QuestDB
+- Instead, we define DataSource manually in `QuestDBConfig.java`
+
+**If you try to use spring.datasource with QuestDB, you'll get:**
+```
+ERROR: SET TRANSACTION ISOLATION LEVEL not supported
+```
+
+**That's why we need the custom config class above.**
+
+### server.port
 
 ```yaml
-driver-class-name: org.postgresql.Driver
+server:
+  port: 8082
 ```
 
 **Why specify this?**
-- Tells Spring which JDBC driver to load
-- Normally auto-detected, but explicit is clearer
+- Default Spring Boot port is 8080
+- Port 8080 may be in use by other services (like the data-generator)
+- Port 8082 clearly identifies this as the database-consumer service
 
-**Why PostgreSQL driver works with QuestDB:**
-- QuestDB implements PostgreSQL wire protocol
-- Driver thinks it's talking to PostgreSQL
-- QuestDB handles messages and responds accordingly
-
-**Think of it as:** QuestDB speaks "PostgreSQL language" fluently.
-
-### spring.datasource.hikari (Connection Pooling)
-
-**What is connection pooling?**
-
-**Without pooling:**
-```
-Request 1 → Open connection → Query → Close connection
-Request 2 → Open connection → Query → Close connection
-Request 3 → Open connection → Query → Close connection
-```
-
-Opening connections is expensive (TCP handshake, authentication, etc.).
-
-**With pooling:**
-```
-App startup → Open 5 connections → Keep them open
-
-Request 1 → Borrow connection #1 → Query → Return to pool
-Request 2 → Borrow connection #2 → Query → Return to pool
-Request 3 → Borrow connection #1 (reused!) → Query → Return to pool
-```
-
-Connections are reused, much faster!
-
-**HikariCP** is the connection pool (default in Spring Boot, fastest available).
-
-**Configuration explained:**
+### kafka.listener.ack-mode
 
 ```yaml
-hikari:
-  maximum-pool-size: 5        # Max 5 connections open at once
-  minimum-idle: 2              # Keep at least 2 connections ready
-  connection-timeout: 30000    # Wait 30s for connection before error
-  idle-timeout: 600000         # Close idle connections after 10 minutes
-  max-lifetime: 1800000        # Close connections after 30 minutes (refresh)
+kafka:
+  listener:
+    ack-mode: manual
 ```
 
-**Why these values?**
+**What is manual acknowledgment?**
+- By default, Kafka auto-commits offsets (marks messages as "processed")
+- Manual mode lets you control when to commit
+- Commit only after successfully writing to database
 
-**maximum-pool-size: 5**
-- We consume 10 messages/sec, insert 1 at a time
-- 5 connections can handle 50-100 inserts/sec (plenty of headroom)
-- More connections = more resources, diminishing returns
+**Why manual mode?**
+- **Prevents data loss:** If database write fails, don't commit offset
+- **At-least-once delivery:** Retry failed messages on restart
+- **Data consistency:** Message committed only after persistence
 
-**minimum-idle: 2**
-- Keep 2 connections warm and ready
-- App starts receiving Kafka messages immediately (no connection delay)
-
-**connection-timeout: 30000 (30 seconds)**
-- If all 5 connections busy, wait 30s for one to free up
-- Should never happen at our scale (10 inserts/sec)
-- If hits timeout → you have a problem (slow queries, connection leak)
-
-**idle-timeout: 600000 (10 minutes)**
-- Close connections idle for 10+ minutes (free resources)
-- New connections opened when needed
-
-**max-lifetime: 1800000 (30 minutes)**
-- Close and re-open connections every 30 minutes
-- Prevents stale connections (network issues, database restarts)
-- Good practice for long-running apps
+**Trade-off:**
+- Possible duplicate processing if app crashes after DB write but before commit
+- For our use case: Better to have duplicates than lost data
 
 ---
 
-## JdbcTemplate vs JPA
+## Required Dependencies
 
-### Why JdbcTemplate?
+### Verify pom.xml Dependencies
 
-**Our use case:**
-```java
-// Simple INSERT
-INSERT INTO ticks (symbol, price, volume, timestamp) 
-VALUES ('AAPL', 180.50, 1000.0, '2024-07-12 10:00:00');
-```
+**Spring JDBC and PostgreSQL driver are required:**
 
-**JdbcTemplate approach:**
-```java
-jdbcTemplate.update(
-    "INSERT INTO ticks VALUES (?, ?, ?, ?)",
-    tick.getSymbol(),
-    tick.getPrice(),
-    tick.getVolume(),
-    tick.getTimestamp()
-);
-```
-
-**Clean, simple, direct SQL.**
-
-**JPA/Hibernate approach:**
-```java
-@Entity
-@Table(name = "ticks")
-public class Tick {
-    @Id @GeneratedValue
-    private Long id;
+```xml
+<dependencies>
+    <!-- Spring JDBC (provides JdbcTemplate) -->
+    <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-jdbc</artifactId>
+    </dependency>
     
-    @Column(name = "symbol")
-    private String symbol;
-    // ... more annotations
-}
-
-// Save
-tickRepository.save(tick);  // Generates SQL automatically
+    <!-- PostgreSQL JDBC driver -->
+    <dependency>
+        <groupId>org.postgresql</groupId>
+        <artifactId>postgresql</artifactId>
+        <scope>runtime</scope>
+    </dependency>
+    
+    <!-- HikariCP connection pool (included in spring-boot-starter-jdbc) -->
+    <!-- No need to add explicitly -->
+</dependencies>
 ```
 
-**More boilerplate, more magic, less control.**
+**What each dependency provides:**
 
-### When to Use Each
+**spring-boot-starter-jdbc:**
+- JdbcTemplate class (simplified JDBC operations)
+- HikariCP connection pool (auto-configured)
+- Transaction support (optional, not used with QuestDB)
+- DataSource abstraction
 
-**Use JdbcTemplate when:**
-- ✅ Simple CRUD operations
-- ✅ You know SQL well
-- ✅ You want full control over queries
-- ✅ Time-series/append-only workload (no complex relations)
-- ✅ Performance is critical (no ORM overhead)
+**postgresql:**
+- PostgreSQL JDBC driver
+- Enables JDBC connection to QuestDB (PostgreSQL wire protocol)
+- Required at runtime only (not for compilation)
 
-**Examples:** Logging, metrics, time-series data (our case)
+**Verify dependencies:**
+```bash
+cd /Users/mhiteshkumar/QuantStream/database-consumer
+mvn dependency:tree | grep -E "spring-boot-starter-jdbc|postgresql|hikari"
+```
 
-**Use JPA when:**
-- Complex object graphs (Order → LineItems → Products)
-- Many relationships (one-to-many, many-to-many)
-- Need object-oriented model
-- Frequent updates to entities
-- Team less comfortable with SQL
+**Expected output:**
+```
+[INFO] +- org.springframework.boot:spring-boot-starter-jdbc:jar:3.3.1:compile
+[INFO] |  +- com.zaxxer:HikariCP:jar:5.0.1:compile
+[INFO] +- org.postgresql:postgresql:jar:42.7.3:runtime
+```
 
-**Examples:** E-commerce, CMS, user management
+**Note:** Do NOT use `spring-boot-starter-data-jpa` — we're using JdbcTemplate, not JPA.
 
-**For our project:** JdbcTemplate is the right choice.
-- Simple table structure
-- Append-only inserts
-- No relationships
-- Performance matters
+**If missing, add to pom.xml and run:**
+```bash
+mvn clean install
+```
+
 
 ---
 
-## Testing Connection
+## Testing JdbcTemplate Configuration
 
 ### Step 1: Verify QuestDB Running
 
@@ -365,9 +531,9 @@ docker-compose up -d
 
 Wait 30 seconds for startup.
 
-### Step 2: Create Test Configuration
+### Step 2: Create DataSource Test
 
-**Create:** `src/test/java/com/quantstream/consumer/QuestDBConnectionTest.java`
+**Create:** `src/test/java/com/quantstream/consumer/JdbcConfigurationTest.java`
 
 ```java
 package com.quantstream.consumer;
@@ -377,37 +543,66 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import javax.sql.DataSource;
+import java.sql.Connection;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 @SpringBootTest
-public class QuestDBConnectionTest {
+public class JdbcConfigurationTest {
+
+    @Autowired
+    private DataSource dataSource;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
     @Test
-    public void testConnection() {
-        // Query QuestDB version
-        String version = jdbcTemplate.queryForObject(
-            "SELECT version()", 
-            String.class
-        );
-        
-        assertNotNull(version);
-        assertTrue(version.contains("PostgreSQL"));
-        System.out.println("QuestDB version: " + version);
+    public void testDataSourceExists() {
+        // Verify Spring created DataSource bean
+        assertNotNull(dataSource);
+        System.out.println("DataSource bean exists: " + dataSource.getClass().getName());
+    }
+
+    @Test
+    public void testJdbcTemplateExists() {
+        // Verify Spring created JdbcTemplate bean
+        assertNotNull(jdbcTemplate);
+        System.out.println("JdbcTemplate bean exists: " + jdbcTemplate.getClass().getName());
+    }
+
+    @Test
+    public void testDatabaseConnection() throws Exception {
+        // Test actual connection to QuestDB
+        try (Connection conn = dataSource.getConnection()) {
+            assertNotNull(conn);
+            System.out.println("Connection established to: " + conn.getMetaData().getURL());
+            
+            // Query QuestDB version using JdbcTemplate
+            String version = jdbcTemplate.queryForObject("SELECT version()", String.class);
+            assertNotNull(version);
+            assertTrue(version.contains("PostgreSQL"));
+            System.out.println("QuestDB version: " + version);
+        }
     }
     
     @Test
     public void testTicksTableExists() {
-        // Check if ticks table exists
-        Integer count = jdbcTemplate.queryForObject(
-            "SELECT COUNT(*) FROM ticks", 
-            Integer.class
-        );
-        
+        // Verify ticks table exists and count rows
+        Integer count = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM ticks", Integer.class);
         assertNotNull(count);
         System.out.println("Ticks table has " + count + " rows");
+    }
+
+    @Test
+    public void testTransactionIsolationNull() throws Exception {
+        // Verify transaction isolation is null (QuestDB doesn't support it)
+        try (Connection conn = dataSource.getConnection()) {
+            int isolation = conn.getTransactionIsolation();
+            System.out.println("Transaction isolation level: " + isolation);
+            // Should be 0 (TRANSACTION_NONE) or Connection.TRANSACTION_READ_UNCOMMITTED (1)
+            // Not TRANSACTION_READ_COMMITTED (2) or higher
+        }
     }
 }
 ```
@@ -415,18 +610,30 @@ public class QuestDBConnectionTest {
 ### Step 3: Run Test
 
 **In IntelliJ:**
-1. Right-click `QuestDBConnectionTest.java`
-2. Select "Run 'QuestDBConnectionTest'"
+1. Right-click `JdbcConfigurationTest.java`
+2. Select "Run 'JdbcConfigurationTest'"
 
 **Expected output:**
 ```
+DataSource bean exists: com.zaxxer.hikari.HikariDataSource
+JdbcTemplate bean exists: org.springframework.jdbc.core.JdbcTemplate
+Connection established to: jdbc:postgresql://localhost:8812/qdb
 QuestDB version: PostgreSQL 12.3
 Ticks table has 0 rows
+Transaction isolation level: 0
 
 BUILD SUCCESS
 ```
 
-**If test passes:** Connection working! ✅
+**What this confirms:**
+- `QuestDBConfig` created DataSource bean (HikariCP connection pool)
+- `QuestDBConfig` created JdbcTemplate bean
+- Connection to QuestDB successful
+- Database accessible via JDBC
+- Transaction isolation set to null/0 (QuestDB compatible)
+- Ticks table exists
+
+**If test passes:** JDBC configuration working! ✅
 
 ---
 
@@ -476,11 +683,35 @@ docker-compose down
 docker-compose up -d
 ```
 
-### Issue 2: "No suitable driver found"
+### Issue 2: "SET TRANSACTION ISOLATION LEVEL not supported"
 
 **Error:**
 ```
-java.sql.SQLException: No suitable driver found for jdbc:postgresql://localhost:8812/questdb
+ERROR: SET TRANSACTION ISOLATION LEVEL not supported
+```
+
+**Cause:** HikariCP trying to set transaction isolation level (QuestDB doesn't support)
+
+**Fix:**
+
+**Verify QuestDBConfig.java has:**
+```java
+config.setTransactionIsolation(null);
+```
+
+**If missing or set to a value (e.g., "TRANSACTION_READ_COMMITTED"):**
+1. Open `QuestDBConfig.java`
+2. Change to: `config.setTransactionIsolation(null);`
+3. Rebuild project
+4. Restart application
+
+**This tells HikariCP "don't try to set isolation level".**
+
+### Issue 3: "No suitable driver found"
+
+**Error:**
+```
+java.sql.SQLException: No suitable driver found for jdbc:postgresql://localhost:8812/qdb
 ```
 
 **Cause:** PostgreSQL JDBC driver missing from dependencies
@@ -512,7 +743,7 @@ Should show:
 [INFO] +- org.postgresql:postgresql:jar:42.7.3:runtime
 ```
 
-### Issue 3: "Authentication failed"
+### Issue 4: "Authentication failed"
 
 **Error:**
 ```
@@ -536,25 +767,16 @@ questdb:
     - QDB_PG_PASSWORD=quest
 ```
 
-**Update application.yml to match:**
-```yaml
-spring:
-  datasource:
-    url: jdbc:postgresql://localhost:8812/questdb?user=admin&password=quest
+**Update QuestDBConfig.java to match:**
+```java
+config.setJdbcUrl("jdbc:postgresql://localhost:8812/qdb");
+config.setUsername("admin");
+config.setPassword("quest");
 ```
 
-**Or use separate properties:**
-```yaml
-spring:
-  datasource:
-    url: jdbc:postgresql://localhost:8812/questdb
-    username: admin
-    password: quest
-```
+**Rebuild and restart app after changing credentials.**
 
-**Restart app after changing credentials.**
-
-### Issue 4: "Relation 'ticks' does not exist"
+### Issue 5: "Relation 'ticks' does not exist"
 
 **Error:**
 ```
@@ -600,50 +822,49 @@ SELECT * FROM ticks LIMIT 1;
 
 Should return empty result (not error).
 
-### Issue 5: "Connection pool exhausted"
+### Issue 6: "Connection timeout"
 
 **Error:**
 ```
-com.zaxxer.hikari.pool.HikariPool$PoolInitializationException: Failed to initialize pool: Connection is not available, request timed out after 30000ms.
+java.sql.SQLException: Timeout after 30000ms
 ```
 
-**Cause:** All connections in use, waiting for one to free up
+**Cause:** Unable to establish database connection within timeout period
 
 **Why this happens:**
-- Connection leak (not closing connections)
-- Extremely slow queries (blocking connections)
-- Pool size too small for workload
+- QuestDB not responding (crashed, overloaded)
+- Network issues between app and database
+- Firewall blocking port 8812
 
 **Debug:**
 
-**Check active connections:**
-```sql
--- Run in QuestDB web console
-SELECT * FROM pg_stat_activity;
+**Check QuestDB health:**
+```bash
+docker logs quantstream-questdb-1
+curl http://localhost:9000
+```
+
+**Check connectivity:**
+```bash
+telnet localhost 8812
 ```
 
 **Fix:**
 
-**Option 1: Increase pool size**
-```yaml
-hikari:
-  maximum-pool-size: 10  # Increase from 5
+**Option 1: Restart QuestDB**
+```bash
+docker-compose restart questdb
 ```
 
-**Option 2: Check for leaks**
-```yaml
-hikari:
-  leak-detection-threshold: 60000  # Log warning if connection held > 60s
+**Option 2: Check for port conflicts**
+```bash
+lsof -i :8812
 ```
 
-**Option 3: Review slow queries**
-```yaml
-logging:
-  level:
-    com.zaxxer.hikari: DEBUG  # Log connection pool activity
+**Option 3: Review QuestDB logs for errors**
+```bash
+docker logs quantstream-questdb-1 --tail 50
 ```
-
-**For our use case (10 inserts/sec):** Pool size of 5 is plenty. If hitting this error, you have a bug (connection leak or blocking operation).
 
 ---
 
@@ -651,11 +872,23 @@ logging:
 
 Before moving to next guide, verify:
 
-- [ ] `application.yml` created with datasource configuration
+- [ ] `application.yml` created with Kafka config (NO spring.datasource or spring.jpa properties)
+- [ ] `QuestDBConfig.java` created in `src/main/java/com/quantstream/consumer/config/`
+- [ ] `@Configuration` annotation present on QuestDBConfig class
+- [ ] DataSource bean configured with `setTransactionIsolation(null)`
+- [ ] JdbcTemplate bean created from DataSource
+- [ ] Application name set to `database-consumer`
+- [ ] Kafka consumer group ID set to `questdb-consumer-group`
+- [ ] Listener ack-mode set to `manual`
+- [ ] Server port set to `8082`
+- [ ] Database URL uses `/qdb` (not `/questdb`)
 - [ ] PostgreSQL JDBC driver in `pom.xml` dependencies
+- [ ] `spring-boot-starter-jdbc` dependency in `pom.xml` (NOT spring-boot-starter-data-jpa)
 - [ ] QuestDB running on port 8812 (verify with `docker ps`)
 - [ ] `ticks` table created in QuestDB
-- [ ] Test connection succeeds (JdbcTemplate can query database)
+- [ ] Test confirms DataSource bean exists
+- [ ] Test confirms JdbcTemplate bean exists
+- [ ] Test confirms transaction isolation is null/0
 - [ ] No connection errors in application startup logs
 - [ ] Web console accessible at http://localhost:9000
 
@@ -663,10 +896,16 @@ Before moving to next guide, verify:
 
 ## What's Next?
 
-Now that QuestDB connection is configured, you'll create:
+Now that JdbcTemplate configuration is complete, you'll create:
 
-1. **Tick.java** (model) — Data class representing one price update (matching Kafka message)
-2. **TickRepository.java** (repository) — Database access layer using JdbcTemplate
-3. **MarketDataConsumer.java** (service) — Kafka listener that saves ticks to QuestDB
+1. **Tick.java** (model) — Plain Java class (POJO) with getters/setters (no JPA annotations)
+2. **TickService.java** (service) — Business logic layer that uses JdbcTemplate to execute SQL
+3. **MarketDataConsumer.java** (consumer) — Kafka listener that calls TickService.save()
 
-**Next guide:** `consumer-model-guide.md` (creating Tick.java and TickRepository.java)
+**Key difference from Spring Data JPA approach:**
+- Write SQL manually (INSERT, SELECT statements)
+- Use JdbcTemplate.update() and JdbcTemplate.query()
+- No repository interfaces (service layer directly uses JdbcTemplate)
+- Plain POJOs (no @Entity, @Table, @Id annotations)
+
+**Next guide:** `consumer-model-guide.md` (creating Tick model and TickService)

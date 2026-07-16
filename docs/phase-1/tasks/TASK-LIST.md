@@ -416,6 +416,7 @@ Follow: `guides/consumer-project-setup.md`
 
 Similar to generator, but different dependencies:
 - Spring Kafka (consumer)
+- Spring Boot JDBC starter (provides JdbcTemplate for direct SQL execution)
 - PostgreSQL JDBC driver (QuestDB uses PostgreSQL wire protocol)
 
 **5.2 Create Data Model**
@@ -442,27 +443,19 @@ This guide explains:
 
 Follow: `guides/consumer-questdb-config.md`
 
-You'll create: `application.yml` with database config
+You'll create: 
+- `application.yml` with database connection properties
+- `QuestDBConfig.java` with custom DataSource and JdbcTemplate beans
 
 This guide explains:
+- Why we use JdbcTemplate instead of JPA (QuestDB doesn't support transactions)
 - QuestDB connection string format
 - Why we use PostgreSQL JDBC driver (QuestDB compatibility)
 - Port 8812 (QuestDB's PostgreSQL wire protocol port, not 9000 which is HTTP)
-- Connection pooling
+- How to configure a custom DataSource for QuestDB
+- How JdbcTemplate provides a simple wrapper around JDBC for executing SQL
 
-**5.5 Create QuestDB Repository**
-
-Follow: `guides/consumer-repository-guide.md`
-
-You'll create: `TickRepository.java`
-
-This guide explains:
-- Why we use JdbcTemplate (simple JDBC wrapper)
-- How to write prepared statements (prevents SQL injection)
-- How to batch inserts (faster than one-by-one)
-- QuestDB-specific SQL syntax
-
-**5.6 Implement Kafka Consumer**
+**5.5 Implement Kafka Consumer**
 
 Follow: `guides/consumer-implementation.md`
 
@@ -471,10 +464,12 @@ You'll create: `TickConsumer.java`
 This guide explains:
 - @KafkaListener annotation
 - How Kafka delivers messages to your method
+- Using JdbcTemplate to execute direct SQL INSERT statements
+- Prepared statements to prevent SQL injection
 - Error handling (what if database is down?)
 - Offset management (Kafka tracks which messages you've processed)
 
-**5.7 Create QuestDB Table**
+**5.6 Create QuestDB Table**
 
 Before running the consumer, create the table:
 
@@ -495,7 +490,7 @@ This guide explains:
 - timestamp(timestamp) designation (tells QuestDB this is the time column)
 - PARTITION BY DAY (creates separate partitions for each day's data)
 
-**5.8 Run and Test**
+**5.7 Run and Test**
 
 ```bash
 # Make sure Generator is still running

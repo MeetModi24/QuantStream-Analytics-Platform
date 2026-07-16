@@ -27,6 +27,7 @@ services:
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+      KAFKA_NUM_PARTITIONS: 3
     networks:
       - quantstream-network
 
@@ -35,7 +36,7 @@ services:
     image: questdb/questdb:8.1.2
     container_name: questdb
     ports:
-      - "9000:9000"  # Web console
+      - "9001:9000"  # Web console
       - "8812:8812"  # PostgreSQL wire protocol
       - "9009:9009"  # InfluxDB line protocol (not used in Phase 1)
     volumes:

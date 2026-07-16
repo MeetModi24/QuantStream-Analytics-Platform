@@ -6,7 +6,7 @@
 
 1. **Message Consumption** - Listens to Kafka topic using `@KafkaListener`
 2. **Automatic Deserialization** - Converts JSON messages to Java objects
-3. **Data Persistence** - Saves ticks to QuestDB for time-series analysis
+3. **Data Persistence** - Saves ticks to QuestDB using Spring Data JPA for time-series analysis
 4. **Error Handling** - Handles malformed messages and database failures gracefully
 5. **Offset Management** - Tracks message processing position for reliability
 
@@ -28,7 +28,7 @@
 ┌──────────────────────────────────────────────────────────┐
 │                     Kafka Topic                           │
 │  Topic: market-data                                       │
-│  Partitions: 1                                            │
+│  Partitions: 3                                            │
 │  Replication: 1                                           │
 │  Format: JSON                                             │
 └──────────────────────────────────────────────────────────┘
@@ -38,13 +38,13 @@
 │  - @KafkaListener receives messages                      │
 │  - Deserializes JSON → Tick object                       │
 │  - Validates data                                         │
-│  - Saves to QuestDB via JdbcTemplate                     │
+│  - Saves to QuestDB via Spring Data JPA                  │
 │  - Commits offset (acknowledges message)                 │
 └──────────────────────────────────────────────────────────┘
                          ↓ (persist)
 ┌──────────────────────────────────────────────────────────┐
 │                       QuestDB                             │
-│  Table: market_ticks                                      │
+│  Table: ticks                                      │
 │  Partitioned by: DAY                                      │
 │  Indexed by: timestamp                                    │
 └──────────────────────────────────────────────────────────┘
@@ -90,7 +90,6 @@
 package com.quantstream.consumer.service;
 
 import com.quantstream.consumer.model.Tick;
-import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -101,6 +100,7 @@ import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.stereotype.Service;
 
+import java.sql.Timestamp;
 import java.time.Instant;
 
 /**
@@ -110,26 +110,27 @@ import java.time.Instant;
  * - Annotation-based consumption (@KafkaListener)
  * - Automatic deserialization (JSON → Tick object)
  * - Manual offset commit (acknowledge after successful persistence)
+ * - JdbcTemplate for database operations (direct SQL control)
  * - Robust error handling (log and continue)
  * - High observability (detailed logging)
  * <p>
  * Performance Characteristics:
  * - Processes messages one at a time (can be configured for batch)
  * - Commits offset after each successful insert
- * - Can handle 1000+ messages/second with connection pooling
+ * - Can handle 1000+ messages/second with JdbcTemplate and connection pooling
+ * - Manual SQL gives full control over INSERT behavior
  */
 @Service
-@RequiredArgsConstructor
 public class TickConsumer {
     
     private static final Logger log = LoggerFactory.getLogger(TickConsumer.class);
     
-    // Injected by Spring
+    // Injected by Spring - JDBC template for raw SQL operations
     private final JdbcTemplate jdbcTemplate;
     
-    // QuestDB insert statement (parameterized for safety)
-    private static final String INSERT_SQL = 
-        "INSERT INTO market_ticks (symbol, price, volume, timestamp) VALUES (?, ?, ?, ?)";
+    public TickConsumer(JdbcTemplate jdbcTemplate) {
+        this.jdbcTemplate = jdbcTemplate;
+    }
     
     // Counters for monitoring
     private long messagesReceived = 0;
@@ -236,7 +237,12 @@ public class TickConsumer {
     }
     
     /**
-     * Persists tick to QuestDB using JDBC.
+     * Persists tick to QuestDB using JdbcTemplate with raw SQL.
+     * <p>
+     * Direct SQL approach:
+     * - Explicit INSERT statement for full control
+     * - Manual Instant → Timestamp conversion required
+     * - Direct database operation (no abstraction layer)
      * <p>
      * QuestDB's INSERT is optimized for time-series data:
      * - Appends to end of partition (very fast)
@@ -245,15 +251,18 @@ public class TickConsumer {
      */
     private void persistTick(Tick tick) {
         try {
+            String sql = "INSERT INTO ticks (symbol, price, volume, timestamp) VALUES (?, ?, ?, ?)";
+            
             jdbcTemplate.update(
-                INSERT_SQL,
+                sql,
                 tick.getSymbol(),
                 tick.getPrice(),
                 tick.getVolume(),
-                tick.getTimestamp()
+                Timestamp.from(tick.getTimestamp())  // Convert Instant to Timestamp
             );
             
-            log.trace("Inserted into QuestDB: {} @ ${}", tick.getSymbol(), tick.getPrice());
+            log.trace("Inserted into QuestDB: {} @ ${}", 
+                     tick.getSymbol(), tick.getPrice());
             
         } catch (Exception e) {
             log.error("Database insert failed: {}", e.getMessage(), e);
@@ -295,6 +304,170 @@ public class TickConsumer {
 
 ---
 
+## Creating TickRepository Interface
+
+### Step 2: Define the JPA Repository
+
+**File:** `src/main/java/com/quantstream/consumer/repository/TickRepository.java`
+
+```java
+package com.quantstream.consumer.repository;
+
+import com.quantstream.consumer.model.Tick;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+/**
+ * Spring Data JPA repository for Tick entities.
+ * <p>
+ * This is just an INTERFACE - Spring Data JPA automatically provides the implementation at runtime.
+ * <p>
+ * Built-in methods (provided by JpaRepository):
+ * - save(Tick tick)              : Insert or update a single tick
+ * - saveAll(List<Tick> ticks)    : Batch insert/update multiple ticks
+ * - findById(Long id)            : Find tick by primary key
+ * - findAll()                    : Retrieve all ticks (use with caution on large tables!)
+ * - count()                      : Count total ticks
+ * - delete(Tick tick)            : Delete a tick
+ * - deleteById(Long id)          : Delete by ID
+ * <p>
+ * You can add custom query methods here if needed:
+ * - findBySymbol(String symbol)
+ * - findByTimestampBetween(Instant start, Instant end)
+ * - findBySymbolAndTimestampAfter(String symbol, Instant timestamp)
+ * <p>
+ * Spring Data JPA automatically implements these based on the method name!
+ */
+@Repository
+public interface TickRepository extends JpaRepository<Tick, Long> {
+    // No methods needed! JpaRepository provides all basic CRUD operations.
+    // Add custom query methods here if needed in future phases.
+}
+```
+
+### Understanding JpaRepository
+
+**What Spring Data JPA provides:**
+
+```java
+// JpaRepository<Tick, Long>
+//             ↑     ↑
+//             |     └─ Type of the primary key (Long id)
+//             └─ Entity class (Tick)
+```
+
+**Built-in methods you get for free:**
+
+| Method | Description | SQL Equivalent |
+|--------|-------------|----------------|
+| `save(tick)` | Insert or update | `INSERT INTO ... ON CONFLICT UPDATE` |
+| `saveAll(list)` | Batch insert | `INSERT INTO ... VALUES (...),...` |
+| `findById(id)` | Find by primary key | `SELECT * FROM ticks WHERE id = ?` |
+| `existsById(id)` | Check if exists | `SELECT EXISTS(SELECT 1 FROM ticks WHERE id = ?)` |
+| `count()` | Count all records | `SELECT COUNT(*) FROM ticks` |
+| `deleteById(id)` | Delete by ID | `DELETE FROM ticks WHERE id = ?` |
+
+**Custom query methods (optional):**
+
+```java
+// Spring Data JPA parses method name and generates SQL automatically!
+public interface TickRepository extends JpaRepository<Tick, Long> {
+    
+    // Find all ticks for a symbol
+    // Generated SQL: SELECT * FROM ticks WHERE symbol = ?
+    List<Tick> findBySymbol(String symbol);
+    
+    // Find ticks in a time range
+    // Generated SQL: SELECT * FROM ticks WHERE timestamp BETWEEN ? AND ?
+    List<Tick> findByTimestampBetween(Instant start, Instant end);
+    
+    // Find ticks for symbol after timestamp
+    // Generated SQL: SELECT * FROM ticks WHERE symbol = ? AND timestamp > ?
+    List<Tick> findBySymbolAndTimestampAfter(String symbol, Instant timestamp);
+    
+    // Count ticks for a symbol
+    // Generated SQL: SELECT COUNT(*) FROM ticks WHERE symbol = ?
+    long countBySymbol(String symbol);
+    
+    // Custom JPQL query (for complex queries)
+    @Query("SELECT t FROM Tick t WHERE t.symbol = :symbol ORDER BY t.timestamp DESC")
+    List<Tick> findLatestTicksForSymbol(@Param("symbol") String symbol, Pageable pageable);
+}
+```
+
+**Method naming convention:**
+
+- `findBy...` - Retrieves entities
+- `countBy...` - Counts matching entities
+- `existsBy...` - Checks if any match exists
+- `deleteBy...` - Deletes matching entities
+- `And`, `Or` - Combine conditions
+- `Between`, `LessThan`, `GreaterThan`, `After`, `Before` - Comparisons
+
+### Why JPA Over JdbcTemplate?
+
+**JdbcTemplate approach (old):**
+```java
+// Manual SQL writing
+jdbcTemplate.update(
+    "INSERT INTO ticks (symbol, price, volume, timestamp) VALUES (?, ?, ?, ?)",
+    tick.getSymbol(),
+    tick.getPrice(),
+    tick.getVolume(),
+    tick.getTimestamp()
+);
+
+// Manual result mapping for queries
+List<Tick> ticks = jdbcTemplate.query(
+    "SELECT * FROM ticks WHERE symbol = ?",
+    new Object[]{symbol},
+    (rs, rowNum) -> new Tick(
+        rs.getLong("id"),
+        rs.getString("symbol"),
+        rs.getDouble("price"),
+        rs.getDouble("volume"),
+        rs.getTimestamp("timestamp").toInstant()
+    )
+);
+```
+
+**Spring Data JPA approach (new):**
+```java
+// No SQL needed!
+tickRepository.save(tick);
+
+// Query methods automatically implemented
+List<Tick> ticks = tickRepository.findBySymbol(symbol);
+```
+
+**Benefits:**
+
+| Feature | JdbcTemplate | Spring Data JPA |
+|---------|-------------|-----------------|
+| SQL Writing | Manual | None (auto-generated) |
+| Type Safety | Runtime | Compile-time |
+| Boilerplate | High | Minimal |
+| Result Mapping | Manual | Automatic |
+| Transaction Management | Manual | Automatic |
+| Batch Operations | Complex | Simple (`saveAll`) |
+| Maintainability | Lower | Higher |
+| Learning Curve | SQL knowledge required | Interface conventions |
+
+**When to use JdbcTemplate:**
+- Very complex SQL that JPA can't express
+- Performance-critical native queries
+- Database-specific features
+- Working with legacy schemas
+
+**When to use Spring Data JPA (most cases):**
+- Standard CRUD operations
+- Type-safe queries
+- Clean, maintainable code
+- Automatic transaction management
+- Batch operations
+
+---
+
 ## Understanding @KafkaListener
 
 ### How Annotation-Based Listening Works
@@ -314,7 +487,7 @@ while (true) {
 **Spring Approach (@KafkaListener):**
 ```java
 // New way - annotation-driven
-@KafkaListener(topics = "market-data", groupId = "tick-consumer")
+@KafkaListener(topics = "market-data", groupId = "${spring.kafka.consumer.group-id}")
 public void consumeTick(Tick tick, Acknowledgment ack) {
     processRecord(tick);
     ack.acknowledge();
@@ -372,6 +545,7 @@ public void consumeTick(Tick tick, Acknowledgment ack) {
 spring:
   kafka:
     consumer:
+      group-id: questdb-consumer-group
       value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
       properties:
         spring.json.trusted.packages: com.quantstream.consumer.model
@@ -458,9 +632,10 @@ kafka:
                       ↓
 ┌─────────────────────────────────────────────────────────┐
 │ 5. Persist to QuestDB                                   │
-│    - Execute INSERT via JdbcTemplate                    │
+│    - Execute tickRepository.save(tick)                  │
+│    - JPA translates to INSERT statement                 │
 │    - QuestDB appends to time-series partition           │
-│    - Returns success/failure                            │
+│    - Returns saved entity with generated ID             │
 └─────────────────────────────────────────────────────────┘
                       ↓
 ┌─────────────────────────────────────────────────────────┐
@@ -476,7 +651,7 @@ kafka:
 **Step 1: Receive message from Kafka**
 
 ```java
-@KafkaListener(topics = "market-data", groupId = "tick-consumer")
+@KafkaListener(topics = "market-data", groupId = "${spring.kafka.consumer.group-id}")
 public void consumeTick(@Payload Tick tick, ...) {
     // Spring has already:
     // 1. Polled Kafka broker
@@ -530,17 +705,32 @@ validateTick(tick);
 - Malicious messages possible
 - Catch problems early
 
-**Step 4: Save to QuestDB via repository**
+**Step 4: Save to QuestDB using JdbcTemplate**
 
 ```java
+// Direct SQL INSERT with JdbcTemplate
+String sql = "INSERT INTO ticks (symbol, price, volume, timestamp) VALUES (?, ?, ?, ?)";
+
 jdbcTemplate.update(
-    "INSERT INTO market_ticks (symbol, price, volume, timestamp) VALUES (?, ?, ?, ?)",
+    sql,
     tick.getSymbol(),
     tick.getPrice(),
     tick.getVolume(),
-    tick.getTimestamp()
+    Timestamp.from(tick.getTimestamp())  // Convert Instant to java.sql.Timestamp
 );
+
+// What happens:
+// 1. Prepare SQL statement with placeholders
+// 2. Bind Java values to SQL parameters
+// 3. Execute INSERT against QuestDB
+// 4. Return number of rows affected (1)
 ```
+
+**Key points:**
+- Direct SQL control (explicit INSERT statement)
+- Manual type conversion (Instant → Timestamp)
+- Positional parameters (?, ?, ?, ?)
+- Returns int (rows affected, not the entity)
 
 **QuestDB optimizations:**
 - Appends to end (no index updates)
@@ -555,7 +745,7 @@ acknowledgment.acknowledge();
 ```
 
 **What happens:**
-- Kafka records: "Consumer group 'tick-consumer' processed offset 12345 in partition 0"
+- Kafka records: "Consumer group 'questdb-consumer-group' processed offset 12345 in partition 0"
 - Next poll will fetch messages starting from offset 12346
 - On restart, consumer resumes from last committed offset
 
@@ -888,7 +1078,7 @@ After restart:
 
 ```sql
 -- Option 1: Unique constraint (prevents duplicates)
-CREATE TABLE market_ticks (
+CREATE TABLE ticks (
     symbol SYMBOL,
     price DOUBLE,
     volume DOUBLE,
@@ -910,7 +1100,7 @@ CREATE TABLE market_ticks (
 # Stop consumer first
 kafka-consumer-groups.sh \
     --bootstrap-server localhost:9092 \
-    --group tick-consumer \
+    --group questdb-consumer-group \
     --reset-offsets \
     --to-datetime 2024-07-15T09:00:00.000 \
     --topic market-data \
@@ -926,7 +1116,7 @@ kafka-consumer-groups.sh \
 spring:
   kafka:
     consumer:
-      group-id: tick-consumer-replay-v2  # New group ID
+      group-id: questdb-consumer-group-replay-v2  # New group ID
 ```
 
 Starts from beginning (or earliest available).
@@ -934,7 +1124,7 @@ Starts from beginning (or earliest available).
 **Method 3: Seek to Specific Offset**
 
 ```java
-@KafkaListener(topics = "market-data", groupId = "tick-consumer")
+@KafkaListener(topics = "market-data", groupId = "${spring.kafka.consumer.group-id}")
 public void consumeTick(...) { ... }
 
 // In a separate admin method:
@@ -955,14 +1145,14 @@ public void replayFrom(long offset) {
 ```java
 @KafkaListener(topics = "market-data")
 public void consumeTick(Tick tick, Acknowledgment ack) {
-    persistTick(tick);          // 1 database call
+    tickRepository.save(tick);  // 1 database call
     ack.acknowledge();
 }
 ```
 
 **Performance:** ~1,000 messages/second (limited by database round-trips)
 
-**Batch processing:**
+**Batch processing with JdbcTemplate:**
 
 ```java
 @KafkaListener(topics = "market-data")
@@ -971,25 +1161,30 @@ public void consumeTicks(List<Tick> ticks, Acknowledgment ack) {
     ack.acknowledge();
 }
 
+/**
+ * Batch persist using JdbcTemplate's batchUpdate() method.
+ * Processes multiple INSERTs in a single database round-trip.
+ */
 private void persistTicksBatch(List<Tick> ticks) {
-    jdbcTemplate.batchUpdate(
-        INSERT_SQL,
-        new BatchPreparedStatementSetter() {
-            @Override
-            public void setValues(PreparedStatement ps, int i) throws SQLException {
-                Tick tick = ticks.get(i);
-                ps.setString(1, tick.getSymbol());
-                ps.setDouble(2, tick.getPrice());
-                ps.setDouble(3, tick.getVolume());
-                ps.setTimestamp(4, Timestamp.from(tick.getTimestamp()));
-            }
-            
-            @Override
-            public int getBatchSize() {
-                return ticks.size();
-            }
+    String sql = "INSERT INTO ticks (symbol, price, volume, timestamp) VALUES (?, ?, ?, ?)";
+    
+    jdbcTemplate.batchUpdate(sql, new BatchPreparedStatementSetter() {
+        @Override
+        public void setValues(PreparedStatement ps, int i) throws SQLException {
+            Tick tick = ticks.get(i);
+            ps.setString(1, tick.getSymbol());
+            ps.setDouble(2, tick.getPrice());
+            ps.setDouble(3, tick.getVolume());
+            ps.setTimestamp(4, Timestamp.from(tick.getTimestamp()));
         }
-    );
+        
+        @Override
+        public int getBatchSize() {
+            return ticks.size();
+        }
+    });
+    
+    log.debug("Batch inserted {} ticks", ticks.size());
 }
 ```
 
@@ -1003,26 +1198,40 @@ spring:
       max-poll-records: 100  # Fetch up to 100 messages per poll
 ```
 
+**Benefits of batch operations:**
+- ✅ 100x fewer database round-trips
+- ✅ Full control over SQL and parameter binding
+- ✅ Efficient use of network and database resources
+- ✅ Explicit batch size control
+
 **Performance:** ~10,000 messages/second (100x fewer database calls)
 
 ### Async Writes
 
 **Synchronous (current):**
 ```java
-jdbcTemplate.update(INSERT_SQL, ...);  // Blocks until database confirms
+tickRepository.save(tick);  // Blocks until database confirms
 ```
 
-**Asynchronous:**
+**Asynchronous with JdbcTemplate:**
 ```java
 @Async
-public CompletableFuture<Void> persistTickAsync(Tick tick) {
-    jdbcTemplate.update(INSERT_SQL, ...);
-    return CompletableFuture.completedFuture(null);
+public CompletableFuture<Integer> persistTickAsync(Tick tick) {
+    String sql = "INSERT INTO ticks (symbol, price, volume, timestamp) VALUES (?, ?, ?, ?)";
+    int rows = jdbcTemplate.update(
+        sql,
+        tick.getSymbol(),
+        tick.getPrice(),
+        tick.getVolume(),
+        Timestamp.from(tick.getTimestamp())
+    );
+    return CompletableFuture.completedFuture(rows);
 }
 
 @KafkaListener(topics = "market-data")
 public void consumeTick(Tick tick, Acknowledgment ack) {
-    persistTickAsync(tick).thenRun(() -> {
+    persistTickAsync(tick).thenAccept(rowsAffected -> {
+        log.debug("Async inserted {} row(s) for {}", rowsAffected, tick.getSymbol());
         ack.acknowledge();  // Commit only after insert completes
     });
 }
@@ -1173,23 +1382,162 @@ if (duration > 100) {
 
 ---
 
-## Testing the Consumer
+## Testing the Consumer with Spring Data JPA
+
+### Unit Testing with Mock Repository
+
+**Test file:** `src/test/java/com/quantstream/consumer/service/TickConsumerTest.java`
+
+```java
+@ExtendWith(MockitoExtension.class)
+class TickConsumerTest {
+    
+    @Mock
+    private TickRepository tickRepository;
+    
+    @InjectMocks
+    private TickConsumer tickConsumer;
+    
+    @Mock
+    private Acknowledgment acknowledgment;
+    
+    @Test
+    void testConsumeTick_Success() {
+        // Arrange
+        Tick tick = new Tick(null, "AAPL", 180.5, 1000.0, Instant.now());
+        Tick savedTick = new Tick(1L, "AAPL", 180.5, 1000.0, tick.getTimestamp());
+        
+        when(tickRepository.save(any(Tick.class))).thenReturn(savedTick);
+        
+        // Act
+        tickConsumer.consumeTick(tick, 0, 123L, System.currentTimeMillis(), acknowledgment);
+        
+        // Assert
+        verify(tickRepository).save(tick);
+        verify(acknowledgment).acknowledge();
+    }
+    
+    @Test
+    void testConsumeTick_DatabaseFailure() {
+        // Arrange
+        Tick tick = new Tick(null, "AAPL", 180.5, 1000.0, Instant.now());
+        
+        when(tickRepository.save(any(Tick.class)))
+            .thenThrow(new DataAccessException("Database error") {});
+        
+        // Act & Assert
+        assertThrows(RuntimeException.class, () -> {
+            tickConsumer.consumeTick(tick, 0, 123L, System.currentTimeMillis(), acknowledgment);
+        });
+        
+        verify(acknowledgment).acknowledge(); // Still acknowledged (DLQ would be better)
+    }
+}
+```
+
+**Benefits of testing with JPA:**
+- Easy to mock `TickRepository` interface
+- No need to set up test database for unit tests
+- Fast test execution
+- Clear verification of save() calls
+
+### Integration Testing with Test Database
+
+```java
+@SpringBootTest
+@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
+@TestPropertySource(properties = {
+    "spring.datasource.url=jdbc:postgresql://localhost:8812/qdb",
+    "spring.jpa.hibernate.ddl-auto=create-drop"  // Auto-create tables for test
+})
+class TickConsumerIntegrationTest {
+    
+    @Autowired
+    private TickRepository tickRepository;
+    
+    @Autowired
+    private TickConsumer tickConsumer;
+    
+    @Test
+    void testPersistTickToDatabase() {
+        // Arrange
+        Tick tick = new Tick(null, "AAPL", 180.5, 1000.0, Instant.now());
+        
+        // Act
+        Tick savedTick = tickRepository.save(tick);
+        
+        // Assert
+        assertNotNull(savedTick.getId());
+        assertEquals("AAPL", savedTick.getSymbol());
+        
+        // Verify it's in database
+        Optional<Tick> found = tickRepository.findById(savedTick.getId());
+        assertTrue(found.isPresent());
+        assertEquals(180.5, found.get().getPrice(), 0.01);
+    }
+    
+    @Test
+    void testBatchSave() {
+        // Arrange
+        List<Tick> ticks = List.of(
+            new Tick(null, "AAPL", 180.5, 1000.0, Instant.now()),
+            new Tick(null, "MSFT", 380.2, 2000.0, Instant.now()),
+            new Tick(null, "GOOGL", 140.8, 1500.0, Instant.now())
+        );
+        
+        // Act
+        List<Tick> savedTicks = tickRepository.saveAll(ticks);
+        
+        // Assert
+        assertEquals(3, savedTicks.size());
+        assertEquals(3, tickRepository.count());
+    }
+}
+```
 
 ### Step 1: Create Table in QuestDB
 
+You have two options for creating the table:
+
+**Option 1: Let JPA Auto-Generate (Development)**
+
+Set in `application.yml`:
+```yaml
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: update  # Auto-create/update schema
+    show-sql: true      # See generated SQL in logs
+```
+
+**Pros:**
+- Automatic table creation
+- Schema updates based on entity changes
+- Perfect for development
+
+**Cons:**
+- May not create optimal QuestDB-specific columns (SYMBOL, partitioning)
+- Not recommended for production
+
+**Option 2: Manual Creation (Production-Ready)**
+
 **Connect to QuestDB console:** http://localhost:9000
 
-**Create table:**
+**Create optimized table:**
 ```sql
-CREATE TABLE market_ticks (
-    symbol SYMBOL,
+CREATE TABLE ticks (
+    id LONG,
+    symbol SYMBOL,           -- QuestDB-optimized indexed string
     price DOUBLE,
     volume DOUBLE,
     timestamp TIMESTAMP
 ) timestamp(timestamp) PARTITION BY DAY;
 ```
 
+**Note the table name:** `ticks` (matches `@Table(name = "ticks")` in Tick entity)
+
 **What this creates:**
+- **id LONG:** Primary key (auto-generated by JPA sequence)
 - **symbol SYMBOL:** Indexed string (faster queries than STRING)
 - **price DOUBLE:** Floating-point number
 - **volume DOUBLE:** Floating-point number
@@ -1198,8 +1546,10 @@ CREATE TABLE market_ticks (
 
 **Verify table exists:**
 ```sql
-SELECT * FROM tables WHERE name = 'market_ticks';
+SELECT * FROM tables WHERE name = 'ticks';
 ```
+
+**Recommended for this guide:** Use Option 2 (manual creation) for optimal QuestDB performance.
 
 ### Step 2: Start Generator
 
@@ -1223,7 +1573,7 @@ DEBUG c.q.g.s.MarketDataGenerator : Tick sent: MSFT -> $380.12
 
 **In terminal 2:**
 ```bash
-cd /Users/mhiteshkumar/QuantStream/data-consumer
+cd /Users/mhiteshkumar/QuantStream/database-consumer
 mvn spring-boot:run
 ```
 
@@ -1250,13 +1600,13 @@ INFO  c.q.c.s.TickConsumer : Processed 100 messages, failed 0, success rate: 100
 docker exec -it kafka kafka-consumer-groups.sh \
     --bootstrap-server localhost:9092 \
     --describe \
-    --group tick-consumer
+    --group questdb-consumer-group
 ```
 
 **Expected output:**
 ```
-GROUP           TOPIC       PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG
-tick-consumer   market-data 0          1234            1234            0
+GROUP                    TOPIC       PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG
+questdb-consumer-group   market-data 0          1234            1234            0
 ```
 
 **LAG = 0** means consumer is caught up.
@@ -1265,11 +1615,58 @@ tick-consumer   market-data 0          1234            1234            0
 
 ## Verification Queries
 
-### Check Data is Being Inserted
+### Using Spring Data JPA Repository Methods
+
+**Create a test endpoint or service method:**
+
+```java
+@RestController
+@RequestMapping("/api/ticks")
+public class TickController {
+    
+    private final TickRepository tickRepository;
+    
+    public TickController(TickRepository tickRepository) {
+        this.tickRepository = tickRepository;
+    }
+    
+    // Get total count
+    @GetMapping("/count")
+    public long getCount() {
+        return tickRepository.count();
+    }
+    
+    // Get latest 10 ticks
+    @GetMapping("/latest")
+    public List<Tick> getLatest() {
+        return tickRepository.findAll(
+            PageRequest.of(0, 10, Sort.by("timestamp").descending())
+        ).getContent();
+    }
+    
+    // Get all ticks for a symbol
+    @GetMapping("/symbol/{symbol}")
+    public List<Tick> getBySymbol(@PathVariable String symbol) {
+        return tickRepository.findBySymbol(symbol);
+    }
+}
+
+// Add these methods to TickRepository:
+List<Tick> findBySymbol(String symbol);
+```
+
+**Test via HTTP:**
+```bash
+curl http://localhost:8080/api/ticks/count
+curl http://localhost:8080/api/ticks/latest
+curl http://localhost:8080/api/ticks/symbol/AAPL
+```
+
+### Using SQL Queries in QuestDB Console
 
 **Latest 10 ticks:**
 ```sql
-SELECT * FROM market_ticks
+SELECT * FROM ticks
 ORDER BY timestamp DESC
 LIMIT 10;
 ```
@@ -1277,7 +1674,7 @@ LIMIT 10;
 **Count by symbol:**
 ```sql
 SELECT symbol, COUNT(*) as tick_count
-FROM market_ticks
+FROM ticks
 GROUP BY symbol
 ORDER BY tick_count DESC;
 ```
@@ -1298,7 +1695,7 @@ GOOGL   123
 **Latest price for each symbol:**
 ```sql
 SELECT symbol, price, timestamp
-FROM market_ticks
+FROM ticks
 LATEST BY symbol;
 ```
 
@@ -1308,7 +1705,7 @@ SELECT
     MIN(price) as min_price,
     MAX(price) as max_price,
     AVG(price) as avg_price
-FROM market_ticks
+FROM ticks
 WHERE symbol = 'AAPL';
 ```
 
@@ -1323,7 +1720,7 @@ WHERE symbol = 'AAPL';
 SELECT 
     timestamp(timestamp, '1m') as minute,
     COUNT(*) as tick_count
-FROM market_ticks
+FROM ticks
 WHERE timestamp > dateadd('h', -1, now())
 GROUP BY minute
 ORDER BY minute DESC;
@@ -1341,7 +1738,7 @@ Wait, that's 600, not 10. Let me fix:
 ```sql
 WITH minute_buckets AS (
     SELECT timestamp(timestamp, '1m') as minute
-    FROM market_ticks
+    FROM ticks
     WHERE timestamp > dateadd('h', -1, now())
     GROUP BY minute
 )
@@ -1365,7 +1762,7 @@ ORDER BY minute DESC;
 SELECT 
     timestamp(timestamp, '1s') as second,
     COUNT(*) as inserts
-FROM market_ticks
+FROM ticks
 WHERE timestamp > dateadd('m', -5, now())
 GROUP BY second
 ORDER BY second DESC
@@ -1405,7 +1802,7 @@ ps aux | grep data-generator
 spring:
   kafka:
     consumer:
-      group-id: tick-consumer  # ← Must match
+      group-id: questdb-consumer-group  # ← Must match
 ```
 
 **4. Check consumer lag:**
@@ -1413,7 +1810,7 @@ spring:
 docker exec -it kafka kafka-consumer-groups.sh \
     --bootstrap-server localhost:9092 \
     --describe \
-    --group tick-consumer
+    --group questdb-consumer-group
 ```
 
 **If LAG is increasing:**
@@ -1492,7 +1889,7 @@ docker exec -it questdb psql -h localhost -p 8812 -U admin -d qdb
 **Symptoms:**
 ```
 ERROR c.q.c.s.TickConsumer : Database insert failed: 
-    duplicate key value violates unique constraint "market_ticks_symbol_timestamp_key"
+    duplicate key value violates unique constraint "ticks_symbol_timestamp_key"
 ```
 
 **Cause:** Consumer reprocessed a message (crash before offset commit).
@@ -1500,8 +1897,8 @@ ERROR c.q.c.s.TickConsumer : Database insert failed:
 **Temporary fix (allow duplicates):**
 ```sql
 -- Remove unique constraint
-DROP TABLE market_ticks;
-CREATE TABLE market_ticks (
+DROP TABLE ticks;
+CREATE TABLE ticks (
     symbol SYMBOL,
     price DOUBLE,
     volume DOUBLE,
@@ -1510,26 +1907,63 @@ CREATE TABLE market_ticks (
 -- No PRIMARY KEY = duplicates allowed
 ```
 
-**Proper fix (idempotent inserts):**
+**Proper fix with JdbcTemplate (idempotent inserts):**
 ```java
-private static final String INSERT_SQL = 
-    "INSERT INTO market_ticks (symbol, price, volume, timestamp) " +
-    "VALUES (?, ?, ?, ?) " +
-    "ON CONFLICT (symbol, timestamp) DO NOTHING";  // PostgreSQL syntax
+// Option 1: Check before insert
+public void persistTickIdempotent(Tick tick) {
+    String checkSql = "SELECT COUNT(*) FROM ticks WHERE symbol = ? AND timestamp = ?";
+    Integer count = jdbcTemplate.queryForObject(
+        checkSql,
+        Integer.class,
+        tick.getSymbol(),
+        Timestamp.from(tick.getTimestamp())
+    );
+    
+    if (count == 0) {
+        String insertSql = "INSERT INTO ticks (symbol, price, volume, timestamp) VALUES (?, ?, ?, ?)";
+        jdbcTemplate.update(
+            insertSql,
+            tick.getSymbol(),
+            tick.getPrice(),
+            tick.getVolume(),
+            Timestamp.from(tick.getTimestamp())
+        );
+    } else {
+        log.debug("Tick already exists, skipping: {} at {}", tick.getSymbol(), tick.getTimestamp());
+    }
+}
+
+// Option 2: Catch duplicate key exception
+public void persistTick(Tick tick) {
+    try {
+        String sql = "INSERT INTO ticks (symbol, price, volume, timestamp) VALUES (?, ?, ?, ?)";
+        jdbcTemplate.update(
+            sql,
+            tick.getSymbol(),
+            tick.getPrice(),
+            tick.getVolume(),
+            Timestamp.from(tick.getTimestamp())
+        );
+    } catch (DataIntegrityViolationException e) {
+        log.warn("Duplicate tick detected, skipping: {} at {}", 
+                tick.getSymbol(), tick.getTimestamp());
+        // Continue processing - not a fatal error
+    }
+}
     
 // QuestDB doesn't support ON CONFLICT yet
 // Use deduplication in query instead:
-SELECT DISTINCT ON (symbol, timestamp) * FROM market_ticks;
+SELECT DISTINCT ON (symbol, timestamp) * FROM ticks;
 ```
 
 ### Issue 5: Consumer Lag Growing
 
 **Symptoms:**
 ```bash
-$ kafka-consumer-groups.sh --describe --group tick-consumer
-GROUP           TOPIC       PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG
-tick-consumer   market-data 0          1000            5000            4000
-                                                                        ↑ Growing
+$ kafka-consumer-groups.sh --describe --group questdb-consumer-group
+GROUP                    TOPIC       PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG
+questdb-consumer-group   market-data 0          1000            5000            4000
+                                                                                 ↑ Growing
 ```
 
 **Cause:** Consumer slower than producer.
@@ -1595,7 +2029,7 @@ spring:
 
 **Or increase heap:**
 ```bash
-java -Xmx2g -jar data-consumer.jar  # 2GB heap
+java -Xmx2g -jar database-consumer.jar  # 2GB heap
 ```
 
 ---
@@ -1604,9 +2038,11 @@ java -Xmx2g -jar data-consumer.jar  # 2GB heap
 
 ### What We Built
 
-**✅ Production-Ready Consumer:**
+**✅ Production-Ready Consumer with JdbcTemplate:**
 - Annotation-based consumption (`@KafkaListener`)
 - Automatic deserialization (JSON → Java)
+- JdbcTemplate for database operations (direct SQL control)
+- Explicit SQL statements for transparency
 - Manual offset commit (reliability)
 - Robust error handling
 - High observability (detailed logging)
@@ -1616,12 +2052,14 @@ java -Xmx2g -jar data-consumer.jar  # 2GB heap
 - Validation before persistence
 - Graceful error handling
 - Statistics tracking
+- Manual Instant → Timestamp conversion
 
 **✅ Performance-Aware:**
 - Connection pooling enabled
-- Batch processing ready
+- Batch processing with `batchUpdate()` method
 - Async writes possible
 - Scalable via concurrency
+- Direct SQL optimization control
 
 ### Current Flow
 
@@ -1634,22 +2072,51 @@ Consumer (@KafkaListener)
     ↓
 Validate Tick
     ↓
-Insert into QuestDB
+JdbcTemplate (jdbcTemplate.update)
+    ↓
+QuestDB (raw SQL INSERT)
     ↓
 Commit Offset
 ```
 
 ### Performance Characteristics
 
-**Current:**
-- Throughput: ~100 messages/second
+**Current (with JdbcTemplate):**
+- Throughput: ~100 messages/second (single message)
 - Latency: ~10ms per message
 - Reliability: Manual commit (no data loss)
+- Code simplicity: Direct SQL control
 
 **Optimized (Phase 6):**
-- Throughput: 10,000+ messages/second
+- Throughput: 10,000+ messages/second (batch inserts)
 - Latency: ~1ms per message (batch)
 - Reliability: Dead Letter Queue for errors
+- Batch optimization: jdbcTemplate.batchUpdate()
+
+### JdbcTemplate Implementation Details
+
+**Key Components:**
+
+| Aspect | Implementation |
+|--------|----------------|
+| **Dependency Injection** | `JdbcTemplate jdbcTemplate` |
+| **Single Insert** | `jdbcTemplate.update(INSERT_SQL, symbol, price, volume, timestamp)` |
+| **Batch Insert** | `jdbcTemplate.batchUpdate(...)` with `BatchPreparedStatementSetter` |
+| **SQL Writing** | Manual SQL strings (full control) |
+| **Type Conversion** | Manual `Timestamp.from(instant)` conversion |
+| **Transaction Management** | Manual `@Transactional` when needed |
+| **Error Handling** | JDBC exceptions (`DataIntegrityViolationException`) |
+| **Return Value** | `int` (rows affected) |
+
+**Benefits Summary:**
+
+✅ **Direct SQL Control**: Write exact SQL statements  
+✅ **Transparent**: See exactly what gets executed  
+✅ **Performance**: Optimize SQL for specific database  
+✅ **Explicit Conversions**: Clear type handling (Instant → Timestamp)  
+✅ **Lightweight**: No ORM overhead  
+✅ **Debuggable**: Easy to log and inspect SQL  
+✅ **Database-Specific**: Can use QuestDB-specific features
 
 ### Next Steps
 
@@ -1722,14 +2189,24 @@ spring:
       ack-mode: manual
 ```
 
-**Transactional database writes:**
+**Transactional database writes with JdbcTemplate:**
 ```java
 @Transactional
 public void consumeTick(Tick tick, Acknowledgment ack) {
-    persistTick(tick);
+    String sql = "INSERT INTO ticks (symbol, price, volume, timestamp) VALUES (?, ?, ?, ?)";
+    jdbcTemplate.update(
+        sql,
+        tick.getSymbol(),
+        tick.getPrice(),
+        tick.getVolume(),
+        Timestamp.from(tick.getTimestamp())
+    );
     ack.acknowledge();
     // Both commit or both rollback
 }
+
+// Manual @Transactional annotation required when coordinating
+// database writes with Kafka offset commits
 ```
 
 **Benefits:**
@@ -1752,5 +2229,112 @@ spring:
 - Version compatibility
 - Better performance (binary)
 - Self-documenting
+
+---
+
+## Spring Data JPA Configuration Reference
+
+### Essential application.yml Settings
+
+```yaml
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:8812/qdb
+    username: admin
+    password: quest
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 5
+      connection-timeout: 30000
+  
+  jpa:
+    # Schema management
+    hibernate:
+      ddl-auto: validate  # Options: create, create-drop, update, validate, none
+    
+    # Show SQL in logs (useful for debugging)
+    show-sql: true
+    
+    # Hibernate properties
+    properties:
+      hibernate:
+        # Dialect for PostgreSQL (QuestDB is wire-compatible)
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        
+        # Format SQL in logs
+        format_sql: true
+        
+        # Batch insert optimization
+        jdbc:
+          batch_size: 100
+        order_inserts: true
+        order_updates: true
+        
+        # Second-level cache (optional)
+        cache:
+          use_second_level_cache: false
+          use_query_cache: false
+        
+        # Statistics (for performance monitoring)
+        generate_statistics: false
+
+# Kafka configuration
+kafka:
+  consumer:
+    group-id: questdb-consumer-group
+    bootstrap-servers: localhost:9092
+```
+
+### DDL-Auto Options Explained
+
+| Option | Behavior | Use Case |
+|--------|----------|----------|
+| `none` | No action | Production (manage schema externally) |
+| `validate` | Validate schema matches entities | Production (verify entities match DB) |
+| `update` | Update schema to match entities | Development (auto-apply changes) |
+| `create` | Drop and recreate schema on startup | Testing (fresh start each run) |
+| `create-drop` | Drop schema on shutdown | Testing (clean up after tests) |
+
+**Recommended:**
+- **Development:** `update` (auto-apply entity changes)
+- **Production:** `validate` (ensure entities match DB, fail if not)
+
+### Logging JPA Operations
+
+```yaml
+logging:
+  level:
+    org.hibernate.SQL: DEBUG                          # Show SQL statements
+    org.hibernate.type.descriptor.sql.BasicBinder: TRACE  # Show SQL parameters
+    org.springframework.orm.jpa: DEBUG                # JPA operations
+    com.quantstream.consumer: DEBUG                   # Your application logs
+```
+
+**Example output:**
+```
+DEBUG org.hibernate.SQL : insert into ticks (price, symbol, timestamp, volume, id) values (?, ?, ?, ?, ?)
+TRACE o.h.type.descriptor.sql.BasicBinder : binding parameter [1] as [DOUBLE] - [180.5]
+TRACE o.h.type.descriptor.sql.BasicBinder : binding parameter [2] as [VARCHAR] - [AAPL]
+```
+
+### Custom Repository Configuration
+
+```java
+@Configuration
+@EnableJpaRepositories(
+    basePackages = "com.quantstream.consumer.repository",
+    enableDefaultTransactions = true
+)
+public class JpaConfig {
+    
+    @Bean
+    public PlatformTransactionManager transactionManager(EntityManagerFactory emf) {
+        return new JpaTransactionManager(emf);
+    }
+}
+```
+
+---
 
 **Next guide:** Analytics queries in Phase 2

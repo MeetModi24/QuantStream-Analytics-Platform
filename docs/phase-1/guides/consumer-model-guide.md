@@ -358,11 +358,11 @@ public class Tick {
 }
 ```
 
-**Note:** This is identical to the generator's `Tick.java`, but in a different package.
+**Note:** This is identical to the generator's `Tick.java` - a simple POJO with Lombok annotations.
 
 ---
 
-## Understanding Each Annotation
+## Understanding Lombok Annotations
 
 ### @Data
 
@@ -928,7 +928,8 @@ private String symbol;
 - **POJO** (Plain Old Java Object) representing one price update
 - **4 fields:** symbol, price, volume, timestamp
 - **Identical to generator's Tick.java**, but in consumer package
-- **Lombok annotations:**
+
+**Lombok annotations:**
   - `@Data` → generates getters, setters, toString, equals, hashCode
   - `@NoArgsConstructor` → generates empty constructor (CRITICAL for JSON deserialization)
   - `@AllArgsConstructor` → generates constructor with all fields (for test data)
@@ -951,4 +952,4 @@ private String symbol;
 - **Contract is JSON:** As long as JSON format matches, services are compatible
 - **For learning:** Simpler than shared libraries/protobuf
 
-**Next:** Create `KafkaConsumerConfig.java` to configure Kafka consumer.
+**Next:** Create the Kafka listener to consume messages from Kafka.

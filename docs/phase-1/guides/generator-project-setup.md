@@ -92,7 +92,7 @@ cd /Users/mhiteshkumar/QuantStream
 curl https://start.spring.io/starter.zip \
   -d type=maven-project \
   -d language=java \
-  -d bootVersion=3.5.0 \
+  -d bootVersion=4.0.7.RELEASE \
   -d groupId=com.quantstream \
   -d artifactId=data-generator \
   -d name="Data Generator" \

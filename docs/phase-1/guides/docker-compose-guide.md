@@ -90,6 +90,7 @@ services:
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+      KAFKA_NUM_PARTITIONS: 3
     networks:
       - quantstream-network
 
@@ -198,6 +199,7 @@ kafka:
     KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
     KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1  # Single broker, no replication
     KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'    # Auto-create topics on first message
+    KAFKA_NUM_PARTITIONS: 3                    # Default 3 partitions per topic
 ```
 
 **Key details:**
@@ -226,7 +228,11 @@ This tells Kafka: "Tell clients to connect to `localhost:9092`"
 **KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true':**
 - When generator sends to topic "market-data", Kafka creates it automatically
 - You don't need to manually create topics
-- Default 1 partition per topic
+
+**KAFKA_NUM_PARTITIONS: 3:**
+- Auto-created topics get 3 partitions
+- Enables parallel processing with multiple consumers
+- Default is 1 partition (we override it to 3)
 
 **KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1:**
 - Internal topic for consumer offsets
@@ -270,8 +276,9 @@ questdb:
 
 **Port 8812:** PostgreSQL wire protocol
 - **Your Java app connects here**
-- JDBC URL: `jdbc:postgresql://localhost:8812/questdb`
+- JDBC URL: `jdbc:postgresql://localhost:8812/qdb`
 - Uses PostgreSQL driver (QuestDB is compatible)
+- Database name is `qdb` (QuestDB's default)
 
 **Port 9009:** InfluxDB line protocol
 - Alternative ingestion method (not using in Phase 1)

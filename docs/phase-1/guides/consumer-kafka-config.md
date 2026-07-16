@@ -20,7 +20,7 @@ public class TickProcessor {
         // Create consumer manually every time
         Properties props = new Properties();
         props.put("bootstrap.servers", "localhost:9092");
-        props.put("group.id", "analytics-group");
+        props.put("group.id", "questdb-consumer-group");
         props.put("key.deserializer", "org.apache.kafka.common.serialization.StringDeserializer");
         props.put("value.deserializer", "org.springframework.kafka.support.serializer.JsonDeserializer");
         
@@ -58,7 +58,7 @@ public class KafkaConsumerConfig {
 
 @Service
 public class TickProcessor {
-    @KafkaListener(topics = "market-data", groupId = "analytics-group")
+    @KafkaListener(topics = "market-data", groupId = "questdb-consumer-group")
     public void processTick(Tick tick) {
         // Process tick - Spring handles polling, threading, offsets
         System.out.println("Received: " + tick);
@@ -157,7 +157,7 @@ StringSerializer     ×××      IntegerDeserializer ✗ (Error!)
 
 **In IntelliJ:**
 
-1. Right-click `src/main/java/com/quantstream/analytics/config`
+1. Right-click `src/main/java/com/quantstream/consumer/config`
 2. New → Java Class
 3. Name: `KafkaConsumerConfig`
 4. Click OK
@@ -165,9 +165,9 @@ StringSerializer     ×××      IntegerDeserializer ✗ (Error!)
 ### Step 2: Write the Code
 
 ```java
-package com.quantstream.analytics.config;
+package com.quantstream.consumer.config;
 
-import com.quantstream.analytics.model.Tick;
+import com.quantstream.consumer.model.Tick;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.springframework.beans.factory.annotation.Value;
@@ -192,7 +192,7 @@ public class KafkaConsumerConfig {
     @Value("${spring.kafka.bootstrap-servers}")
     private String bootstrapServers;
 
-    @Value("${spring.kafka.consumer.group-id:analytics-group}")
+    @Value("${spring.kafka.consumer.group-id:questdb-consumer-group}")
     private String groupId;
 
     /**
@@ -215,7 +215,7 @@ public class KafkaConsumerConfig {
         configProps.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, JsonDeserializer.class);
         
         // JsonDeserializer specific: trust our Tick class
-        configProps.put(JsonDeserializer.TRUSTED_PACKAGES, "com.quantstream.analytics.model");
+        configProps.put(JsonDeserializer.TRUSTED_PACKAGES, "com.quantstream.consumer.model");
         
         // Start reading from earliest message if no previous offset
         configProps.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
@@ -301,32 +301,34 @@ public class KafkaConsumerConfig {
 @Value("${spring.kafka.bootstrap-servers}")
 private String bootstrapServers;
 
-@Value("${spring.kafka.consumer.group-id:analytics-group}")
+@Value("${spring.kafka.consumer.group-id:questdb-consumer-group}")
 private String groupId;
 ```
 
 **What it does:**
 - Reads values from `application.yml`
-- Second one has default value (`analytics-group`)
+- Second one has default value (`questdb-consumer-group`)
 
 **From application.yml:**
 ```yaml
 spring:
+  application:
+    name: database-consumer
   kafka:
     bootstrap-servers: localhost:9092
     consumer:
-      group-id: analytics-group
+      group-id: questdb-consumer-group
 ```
 
 **Result:**
 ```java
 bootstrapServers = "localhost:9092"
-groupId = "analytics-group"
+groupId = "questdb-consumer-group"
 ```
 
 **Why defaults?**
 ```java
-@Value("${spring.kafka.consumer.group-id:analytics-group}")
+@Value("${spring.kafka.consumer.group-id:questdb-consumer-group}")
                                        ↑
                                        Default if property missing
 ```
@@ -393,7 +395,7 @@ configProps.put(ConsumerConfig.GROUP_ID_CONFIG, groupId);
 
 **What:** Unique identifier for this consumer group
 
-**Value:** `"analytics-group"`
+**Value:** `"questdb-consumer-group"`
 
 **Why critical:** Determines how Kafka assigns partitions and tracks progress
 
@@ -444,7 +446,7 @@ Consumer: JsonDeserializer ✓
 ### TRUSTED_PACKAGES
 
 ```java
-configProps.put(JsonDeserializer.TRUSTED_PACKAGES, "com.quantstream.analytics.model");
+configProps.put(JsonDeserializer.TRUSTED_PACKAGES, "com.quantstream.consumer.model");
 ```
 
 **What:** Security - which packages can JsonDeserializer instantiate
@@ -455,12 +457,12 @@ configProps.put(JsonDeserializer.TRUSTED_PACKAGES, "com.quantstream.analytics.mo
 
 **Without this:**
 ```
-ERROR: The class 'com.quantstream.analytics.model.Tick' is not in the trusted packages
+ERROR: The class 'com.quantstream.consumer.model.Tick' is not in the trusted packages
 ```
 
 **Options:**
 ```java
-"com.quantstream.analytics.model"     // Specific package
+"com.quantstream.consumer.model"     // Specific package
 "com.quantstream.*"                   // All subpackages
 "*"                                   // Trust all (DANGEROUS - don't use in prod)
 ```
@@ -696,7 +698,7 @@ Threads = min(concurrency, number of partitions)
 @Service
 public class TickProcessor {
     
-    @KafkaListener(topics = "market-data", groupId = "analytics-group")
+    @KafkaListener(topics = "market-data", groupId = "questdb-consumer-group")
     public void processTick(Tick tick) {
         System.out.println(Thread.currentThread().getName() + ": " + tick);
     }
@@ -705,9 +707,9 @@ public class TickProcessor {
 
 **Output:**
 ```
-consumer-analytics-group-0-C-1: Tick(AAPL, 180.5, ...)
-consumer-analytics-group-1-C-1: Tick(GOOGL, 2800.0, ...)
-consumer-analytics-group-2-C-1: Tick(MSFT, 340.0, ...)
+consumer-questdb-consumer-group-0-C-1: Tick(AAPL, 180.5, ...)
+consumer-questdb-consumer-group-1-C-1: Tick(GOOGL, 2800.0, ...)
+consumer-questdb-consumer-group-2-C-1: Tick(MSFT, 340.0, ...)
 ```
 
 3 different threads processing in parallel.
@@ -736,14 +738,14 @@ consumer-analytics-group-2-C-1: Tick(MSFT, 340.0, ...)
 
 ### Single Consumer Group
 
-**Topic: 3 partitions, 1 consumer, group: "analytics-group"**
+**Topic: 3 partitions, 1 consumer, group: "questdb-consumer-group"**
 
 ```
 Topic: market-data
 ┌─────────────┐
 │ Partition 0 │───┐
 ├─────────────┤   │
-│ Partition 1 │───┼──→ Consumer 1 (analytics-group)
+│ Partition 1 │───┼──→ Consumer 1 (questdb-consumer-group)
 ├─────────────┤   │    Reads ALL partitions
 │ Partition 2 │───┘
 └─────────────┘
@@ -759,16 +761,16 @@ Consumer 1: [msg0, msg1, msg2, msg3, msg4, msg5, msg6, msg7, msg8, msg9, ...]
 
 ### Multiple Consumers in One Group
 
-**Topic: 3 partitions, 3 consumers, group: "analytics-group"**
+**Topic: 3 partitions, 3 consumers, group: "questdb-consumer-group"**
 
 ```
 Topic: market-data
 ┌─────────────┐
-│ Partition 0 │──────→ Consumer 1 (analytics-group)
+│ Partition 0 │──────→ Consumer 1 (questdb-consumer-group)
 ├─────────────┤          Reads P0 only
-│ Partition 1 │──────→ Consumer 2 (analytics-group)
+│ Partition 1 │──────→ Consumer 2 (questdb-consumer-group)
 ├─────────────┤          Reads P1 only
-│ Partition 2 │──────→ Consumer 3 (analytics-group)
+│ Partition 2 │──────→ Consumer 3 (questdb-consumer-group)
 └─────────────┘          Reads P2 only
 ```
 
@@ -785,19 +787,19 @@ Consumer 3: [msg2, msg5, msg8, msg11, ...]  (all from P2)
 
 ### Too Many Consumers
 
-**Topic: 3 partitions, 5 consumers, group: "analytics-group"**
+**Topic: 3 partitions, 5 consumers, group: "questdb-consumer-group"**
 
 ```
 Topic: market-data
 ┌─────────────┐
-│ Partition 0 │──────→ Consumer 1 (analytics-group)
+│ Partition 0 │──────→ Consumer 1 (questdb-consumer-group)
 ├─────────────┤
-│ Partition 1 │──────→ Consumer 2 (analytics-group)
+│ Partition 1 │──────→ Consumer 2 (questdb-consumer-group)
 ├─────────────┤
-│ Partition 2 │──────→ Consumer 3 (analytics-group)
+│ Partition 2 │──────→ Consumer 3 (questdb-consumer-group)
 └─────────────┘
-                       Consumer 4 (analytics-group) → IDLE
-                       Consumer 5 (analytics-group) → IDLE
+                       Consumer 4 (questdb-consumer-group) → IDLE
+                       Consumer 5 (questdb-consumer-group) → IDLE
 ```
 
 **Consumer 4 & 5:** Idle (no partitions to consume)
@@ -813,11 +815,11 @@ Topic: market-data
 ```
 Topic: market-data
 ┌─────────────┐
-│ Partition 0 │──┬──→ Consumer A1 (analytics-group)
+│ Partition 0 │──┬──→ Consumer A1 (questdb-consumer-group)
 ├─────────────┤  │
-│ Partition 1 │──┼──→ Consumer A2 (analytics-group)
+│ Partition 1 │──┼──→ Consumer A2 (questdb-consumer-group)
 ├─────────────┤  │
-│ Partition 2 │──┼──→ Consumer A3 (analytics-group)
+│ Partition 2 │──┼──→ Consumer A3 (questdb-consumer-group)
 └─────────────┘  │
                  │
                  └──→ Consumer B1 (alerting-group)
@@ -826,7 +828,7 @@ Topic: market-data
 
 **BOTH groups read ALL messages independently:**
 
-**analytics-group (3 consumers):**
+**questdb-consumer-group (3 consumers):**
 ```
 Consumer A1: [msg0, msg3, msg6, ...]   (P0)
 Consumer A2: [msg1, msg4, msg7, ...]   (P1)
@@ -842,7 +844,7 @@ Consumer B1: [msg0, msg1, msg2, msg3, msg4, msg5, msg6, msg7, msg8, ...]
 **Key insight:** Different groups track offsets independently
 
 **Use cases:**
-- **analytics-group:** Stores data in database
+- **questdb-consumer-group:** Stores data in database
 - **alerting-group:** Sends alerts for price spikes
 
 **Both process the same messages!**
@@ -933,10 +935,10 @@ Key:   (group.id, topic, partition)
 Value: (offset, metadata)
 
 Example:
-Key:   ("analytics-group", "market-data", 0)
+Key:   ("questdb-consumer-group", "market-data", 0)
 Value: (offset: 1500, timestamp: 2024-07-12T10:00:00Z)
 
-Means: analytics-group has read up to offset 1500 in partition 0
+Means: questdb-consumer-group has read up to offset 1500 in partition 0
 ```
 
 **Why stored in Kafka?**
@@ -1084,7 +1086,7 @@ No offset found → Error
 
 3. Auto-commit (every 5 seconds)
    ├─ Commit current offset to __consumer_offsets
-   └─ Example: Save (group="analytics-group", topic="market-data", partition=0, offset=1520)
+   └─ Example: Save (group="questdb-consumer-group", topic="market-data", partition=0, offset=1520)
 
 4. Consumer crashes
    └─ Last committed offset persists in Kafka
@@ -1115,15 +1117,15 @@ mvn compile
 
 ### Step 2: Verify Bean Creation
 
-**Temporarily add to `AnalyticsApplication.java`:**
+**Temporarily add to `ConsumerApplication.java`:**
 
 ```java
 @SpringBootApplication
 @EnableKafka
-public class AnalyticsApplication {
+public class ConsumerApplication {
 
     public static void main(String[] args) {
-        ConfigurableApplicationContext context = SpringApplication.run(AnalyticsApplication.class, args);
+        ConfigurableApplicationContext context = SpringApplication.run(ConsumerApplication.class, args);
         
         // Check if consumer beans exist
         ConsumerFactory<String, Tick> consumerFactory = context.getBean(ConsumerFactory.class);
@@ -1200,10 +1202,12 @@ java.lang.IllegalArgumentException: Could not resolve placeholder 'spring.kafka.
 **Fix:** Verify `src/main/resources/application.yml`:
 ```yaml
 spring:
+  application:
+    name: database-consumer
   kafka:
     bootstrap-servers: localhost:9092
     consumer:
-      group-id: analytics-group
+      group-id: questdb-consumer-group
 ```
 
 ### Issue 2: Connection Refused to localhost:9092
@@ -1228,14 +1232,14 @@ Wait for: `[KafkaServer id=1] started`
 **Error:**
 ```
 org.springframework.kafka.support.serializer.DeserializationException: 
-The class 'com.quantstream.analytics.model.Tick' is not in the trusted packages
+The class 'com.quantstream.consumer.model.Tick' is not in the trusted packages
 ```
 
 **Cause:** JsonDeserializer security check
 
 **Fix 1:** Add trusted package to config:
 ```java
-configProps.put(JsonDeserializer.TRUSTED_PACKAGES, "com.quantstream.analytics.model");
+configProps.put(JsonDeserializer.TRUSTED_PACKAGES, "com.quantstream.consumer.model");
 ```
 
 **Fix 2:** Use constructor parameter:
@@ -1264,7 +1268,7 @@ Should see messages.
 docker exec -it kafka kafka-consumer-groups \
   --bootstrap-server localhost:9092 \
   --describe \
-  --group analytics-group
+  --group questdb-consumer-group
 ```
 
 **Output:**
@@ -1371,7 +1375,7 @@ public void processTick(Tick tick) {
 
 **Key configurations:**
 - **BOOTSTRAP_SERVERS:** `localhost:9092` (where Kafka is)
-- **GROUP_ID:** `analytics-group` (consumer group identity) **[CRITICAL]**
+- **GROUP_ID:** `questdb-consumer-group` (consumer group identity) **[CRITICAL]**
 - **KEY_DESERIALIZER:** StringDeserializer (bytes → String)
 - **VALUE_DESERIALIZER:** JsonDeserializer (bytes → JSON → Tick)
 - **TRUSTED_PACKAGES:** Security for deserialization
@@ -1397,7 +1401,7 @@ public void processTick(Tick tick) {
 ```java
 @Service
 public class TickProcessor {
-    @KafkaListener(topics = "market-data", groupId = "analytics-group")
+    @KafkaListener(topics = "market-data", groupId = "questdb-consumer-group")
     public void processTick(Tick tick) {
         // Process tick - Spring handles everything
         System.out.println("Processing: " + tick);

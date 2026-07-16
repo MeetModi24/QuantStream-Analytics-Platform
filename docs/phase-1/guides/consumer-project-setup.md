@@ -44,8 +44,7 @@ database-consumer/
         │       ├── model/
         │       │   └── Tick.java                # Data model (same as generator)
         │       └── service/
-        │           ├── TickConsumer.java        # Kafka message listener
-        │           └── TickRepository.java      # Database operations
+        │           └── TickConsumer.java        # Kafka message listener
         └── resources/
             └── application.yml                   # Configuration file
 ```
@@ -87,6 +86,7 @@ database-consumer/
 
    **Dependencies (click "Add Dependencies" button):**
    - Spring for Apache Kafka
+   - Spring Data JDBC
    - PostgreSQL Driver
    - Lombok
    - Spring Boot DevTools
@@ -111,7 +111,7 @@ cd /Users/mhiteshkumar/QuantStream
 curl https://start.spring.io/starter.zip \
   -d type=maven-project \
   -d language=java \
-  -d bootVersion=3.5.0 \
+  -d bootVersion=4.0.7.RELEASE \
   -d groupId=com.quantstream \
   -d artifactId=database-consumer \
   -d name="Database Consumer" \
@@ -119,7 +119,7 @@ curl https://start.spring.io/starter.zip \
   -d packageName=com.quantstream.consumer \
   -d packaging=jar \
   -d javaVersion=21 \
-  -d dependencies=kafka,postgresql,lombok,devtools \
+  -d dependencies=kafka,jdbc,postgresql,lombok,devtools \
   -o database-consumer.zip
 
 unzip database-consumer.zip
@@ -211,6 +211,12 @@ unzip database-consumer.zip
             <artifactId>spring-kafka</artifactId>
         </dependency>
         
+        <!-- Spring Data JDBC (database access without ORM) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-jdbc</artifactId>
+        </dependency>
+        
         <!-- PostgreSQL JDBC Driver (connects to QuestDB) -->
         <dependency>
             <groupId>org.postgresql</groupId>
@@ -290,7 +296,64 @@ unzip database-consumer.zip
 - **Consumer** (this project): Receives messages using `@KafkaListener`
 - Same library, different parts
 
-#### 2. PostgreSQL JDBC Driver
+#### 2. Spring Data JDBC
+
+```xml
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-jdbc</artifactId>
+</dependency>
+```
+
+**What it provides:**
+- `JdbcTemplate` for executing SQL statements
+- Connection pooling via HikariCP (automatic in Spring Boot)
+- Transaction management
+- ResultSet to object mapping
+
+**Why JDBC instead of JPA?**
+- **QuestDB doesn't support full transactions** — it's optimized for high-speed time-series writes
+- JPA/Hibernate expects full ACID transaction support
+- JDBC gives us direct control over SQL statements
+- Simpler for time-series insert-only workloads
+
+**How it works:**
+```java
+// Define model (plain Java class, no @Entity)
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+public class Tick {
+    private String symbol;
+    private double price;
+    private long volume;
+    private Instant timestamp;
+}
+
+// Use JdbcTemplate in service
+@Service
+public class TickConsumer {
+    private final JdbcTemplate jdbcTemplate;
+    
+    public void consume(Tick tick) {
+        String sql = "INSERT INTO tick (symbol, price, volume, timestamp) VALUES (?, ?, ?, ?)";
+        jdbcTemplate.update(sql, 
+            tick.getSymbol(), 
+            tick.getPrice(), 
+            tick.getVolume(), 
+            tick.getTimestamp()
+        );
+    }
+}
+```
+
+**Benefits for time-series data:**
+- Direct SQL control for optimized QuestDB inserts
+- No ORM overhead
+- Works perfectly with QuestDB's append-only model
+- Type-safe parameter binding
+
+#### 3. PostgreSQL JDBC Driver
 
 ```xml
 <dependency>
@@ -302,7 +365,7 @@ unzip database-consumer.zip
 
 **What it provides:**
 - JDBC driver for connecting to PostgreSQL-compatible databases
-- Standard SQL operations: `INSERT`, `SELECT`, `CREATE TABLE`
+- Used by JdbcTemplate under the hood
 - Connection pooling via HikariCP (included in Spring Boot)
 
 **Why it works with QuestDB:**
@@ -314,23 +377,13 @@ unzip database-consumer.zip
 | **SQL Dialect** | Standard SQL | PostgreSQL-compatible SQL |
 | **Connection** | `jdbc:postgresql://host:port/db` | `jdbc:postgresql://host:8812/qdb` |
 
-**Code example:**
-```java
-// Same code works for both PostgreSQL and QuestDB
-Connection conn = DriverManager.getConnection(
-    "jdbc:postgresql://localhost:8812/qdb",
-    "admin", 
-    "quest"
-);
-```
+**JDBC + QuestDB = Perfect match:**
+- Write SQL optimized for QuestDB's time-series model
+- PostgreSQL driver sends statements to QuestDB
+- QuestDB optimizes storage automatically (columnar, time-series indexing)
+- Direct control over INSERT statements for maximum performance
 
-**QuestDB-specific optimizations happen automatically:**
-- Columnar storage
-- Time-series indexing
-- Out-of-order ingestion
-- We just use standard SQL!
-
-#### 3. Lombok
+#### 4. Lombok
 
 ```xml
 <dependency>
@@ -370,7 +423,7 @@ public class Tick {
 }
 ```
 
-#### 4. Spring Boot DevTools
+#### 5. Spring Boot DevTools
 
 ```xml
 <dependency>
@@ -539,6 +592,21 @@ spring:
   application:
     name: database-consumer
   
+  datasource:
+    url: jdbc:postgresql://localhost:8812/qdb
+    username: admin
+    password: quest
+    driver-class-name: org.postgresql.Driver
+  
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+  
   kafka:
     bootstrap-servers: localhost:9092
     consumer:
@@ -559,11 +627,8 @@ logging:
     com.quantstream: DEBUG
     org.springframework: INFO
     org.apache.kafka: WARN
-
-questdb:
-  url: jdbc:postgresql://localhost:8812/qdb
-  username: admin
-  password: quest
+    org.hibernate.SQL: DEBUG
+    org.hibernate.type.descriptor.sql.BasicBinder: TRACE
 ```
 
 ### Understanding Each Section
@@ -577,6 +642,60 @@ spring:
 ```
 
 Application name (used in logs, metrics).
+
+#### Spring DataSource Configuration
+
+```yaml
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:8812/qdb
+    username: admin
+    password: quest
+    driver-class-name: org.postgresql.Driver
+```
+
+**Connection details:**
+- **Protocol:** `jdbc:postgresql://` (PostgreSQL wire protocol)
+- **Host:** `localhost` (Docker Compose setup)
+- **Port:** `8812` (QuestDB's PostgreSQL-compatible port, not 5432)
+- **Database:** `qdb` (default QuestDB database name)
+- **Username:** `admin` (default)
+- **Password:** `quest` (default)
+- **Driver:** PostgreSQL JDBC driver (works with QuestDB)
+
+**This is Spring Boot's standard datasource config** — no custom config needed!
+
+#### JPA/Hibernate Configuration
+
+```yaml
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+```
+
+**hibernate.ddl-auto: update**
+- Automatically creates/updates database tables based on `@Entity` classes
+- When app starts, Hibernate compares entities to database schema
+- Creates missing tables, adds missing columns
+- Never drops tables or columns (safe for development)
+
+**show-sql: true**
+- Prints SQL statements to console
+- Helps debug what JPA is doing
+- Example: `INSERT INTO tick (symbol, price, timestamp) VALUES (?, ?, ?)`
+
+**hibernate.dialect: PostgreSQLDialect**
+- Tells Hibernate to generate PostgreSQL-compatible SQL
+- Works with QuestDB because it implements PostgreSQL wire protocol
+
+**hibernate.format_sql: true**
+- Pretty-prints SQL in logs (makes it readable)
 
 #### Kafka Bootstrap Servers
 
@@ -670,7 +789,7 @@ listener:
 ```java
 @KafkaListener(topics = "market-data")
 public void consume(Tick tick, Acknowledgment ack) {
-    repository.save(tick);    // Save to database
+    repository.save(tick);    // JPA saves to database automatically
     ack.acknowledge();         // Now mark as processed
 }
 ```
@@ -679,6 +798,11 @@ public void consume(Tick tick, Acknowledgment ack) {
 - Don't acknowledge
 - Kafka will redeliver message
 - No data loss
+
+**With JdbcTemplate:**
+- `jdbcTemplate.update(sql, params)` — Direct SQL execution
+- Full control over SQL statements
+- Type-safe parameter binding
 
 #### Server Port
 
@@ -703,6 +827,8 @@ logging:
     com.quantstream: DEBUG
     org.springframework: INFO
     org.apache.kafka: WARN
+    org.hibernate.SQL: DEBUG
+    org.hibernate.type.descriptor.sql.BasicBinder: TRACE
 ```
 
 **Logging levels:**
@@ -713,30 +839,15 @@ logging:
 **Our code will log:**
 ```
 DEBUG c.q.c.s.TickConsumer : Received tick: AAPL -> $180.52
-DEBUG c.q.c.s.TickRepository : Saved to QuestDB: AAPL
+DEBUG org.hibernate.SQL : insert into tick (symbol, price, timestamp) values (?, ?, ?)
+TRACE o.h.t.d.s.BasicBinder : binding parameter [1] as [VARCHAR] - [AAPL]
+TRACE o.h.t.d.s.BasicBinder : binding parameter [2] as [DOUBLE] - [180.52]
+TRACE o.h.t.d.s.BasicBinder : binding parameter [3] as [TIMESTAMP] - [2024-07-16T10:30:00Z]
 ```
 
-#### QuestDB Connection
-
-```yaml
-questdb:
-  url: jdbc:postgresql://localhost:8812/qdb
-  username: admin
-  password: quest
-```
-
-**Connection details:**
-- **Protocol:** `jdbc:postgresql://` (PostgreSQL wire protocol)
-- **Host:** `localhost` (Docker Compose setup)
-- **Port:** `8812` (QuestDB's PostgreSQL-compatible port, not 5432)
-- **Database:** `qdb` (default QuestDB database name)
-- **Username:** `admin` (default)
-- **Password:** `quest` (default)
-
-**Custom config section:**
-- Not Spring Boot standard (we'll read this manually)
-- Spring Boot auto-config doesn't know about QuestDB
-- We'll create `QuestDBConfig.java` to read these values
+**Hibernate logs show:**
+- **org.hibernate.SQL: DEBUG** — Shows SQL statements
+- **BasicBinder: TRACE** — Shows parameter values being bound to SQL
 
 ---
 
@@ -922,10 +1033,13 @@ Before moving to next guide, verify:
 
 Now that the project skeleton is ready, you'll create:
 
-1. **Tick.java** (model) — Data class representing one price update (same structure as generator)
-2. **QuestDBConfig.java** (config) — QuestDB connection configuration
-3. **KafkaConsumerConfig.java** (config) — Kafka consumer configuration
-4. **TickRepository.java** (service) — Database operations (INSERT into QuestDB)
-5. **TickConsumer.java** (service) — Kafka message listener that calls repository
+1. **Tick.java** (model) — Plain Java class with Lombok annotations (no JPA annotations)
+2. **TickConsumer.java** (service) — Kafka message listener that uses JdbcTemplate to insert data
 
-**Next guide:** `consumer-model-guide.md` (creating Tick.java and config classes)
+**No config classes needed:**
+- Spring Boot auto-configures datasource from `application.yml`
+- Spring Boot auto-configures JdbcTemplate
+- Spring Boot auto-configures Kafka consumer
+- Simple and direct for time-series data!
+
+**Next guide:** `consumer-model-guide.md` (creating model and consumer service)
