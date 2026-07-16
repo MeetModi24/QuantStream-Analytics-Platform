@@ -1,0 +1,33 @@
+spring:
+  application:
+    name: database-consumer
+
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      group-id: questdb-consumer-group
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: com.quantstream.consumer.model
+    listener:
+      ack-mode: manual
+
+  datasource:
+    url: jdbc:postgresql://localhost:8812/qdb
+    username: admin
+    password: quest
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      auto-commit: true
+
+server:
+  port: 8082
+
+logging:
+  level:
+    com.quantstream: DEBUG
+    org.springframework: INFO
+    org.apache.kafka: WARN
+
