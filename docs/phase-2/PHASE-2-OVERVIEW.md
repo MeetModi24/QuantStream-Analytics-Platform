@@ -13,14 +13,28 @@ Build multiple trading strategy microservices that analyze stored tick data and 
 ```
 QuestDB (27k+ ticks stored from Phase 1)
     ↓ (strategies query via SQL)
-Strategy Services (10 Java microservices)
+Strategy Engine (1 Java service, 10 strategies inside)
     ↓ (produce signals to)
 Kafka Topic: "trading-signals"
     ↓ (consumed by)
-Signal Aggregator (Java)
+Signal Aggregator (1 Java service)
     ↓ (writes to)
 QuestDB Table: signals
 ```
+
+**Key Architectural Decision:** All 10 strategies run inside a **single** `strategy-engine` service.
+
+**Why not 10 separate microservices?**
+- Strategies are just algorithms (idempotent, deterministic)
+- All have identical resource needs (query DB → calculate → produce signal)
+- Free tier deployment constraints (11 services = 2.75 GB RAM minimum)
+- No organizational need (not separate teams)
+- Easier development, debugging, and deployment
+
+**Why signal-aggregator is separate:**
+- Different responsibility (CQRS: strategies = write, aggregator = read + API)
+- Different scaling profile (CPU-bound vs I/O-bound)
+- Different failure domain (aggregator down doesn't stop signal generation)
 
 ---
 
@@ -42,27 +56,37 @@ After Phase 2, you can:
 │                  PHASE 2: STRATEGY ENGINE                    │
 ├─────────────────────────────────────────────────────────────┤
 │                                                              │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
-│  │ MA-Crossover │  │ MACD Strategy│  │ RSI Strategy │     │
-│  │  (Java)      │  │  (Java)      │  │  (Java)      │     │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘     │
-│         │                  │                  │              │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
-│  │ Bollinger    │  │ Stochastic   │  │ Williams %R  │     │
-│  │  (Java)      │  │  (Java)      │  │  (Java)      │     │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘     │
-│         │                  │                  │              │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
-│  │ ADX Trend    │  │ Donchian Ch. │  │ ROC Momentum │     │
-│  │  (Java)      │  │  (Java)      │  │  (Java)      │     │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘     │
-│         │                  │                  │              │
-│  ┌──────────────┐                                           │
-│  │ VWAP Deviation                                           │
-│  │  (Java)      │                                           │
-│  └──────┬───────┘                                           │
-│         │                                                    │
-│         └──────────────────┼──────────────────┘             │
+│  ┌────────────────────────────────────────────────────┐    │
+│  │          Strategy Engine (Spring Boot)             │    │
+│  │                                                     │    │
+│  │  ┌───────────────┐  ┌───────────────┐            │    │
+│  │  │ MA-Crossover  │  │ MACD Strategy │            │    │
+│  │  │  @Component   │  │  @Component   │  ...       │    │
+│  │  └───────────────┘  └───────────────┘            │    │
+│  │                                                     │    │
+│  │  ┌───────────────┐  ┌───────────────┐            │    │
+│  │  │ RSI Strategy  │  │ Bollinger     │            │    │
+│  │  │  @Component   │  │  @Component   │  ...       │    │
+│  │  └───────────────┘  └───────────────┘            │    │
+│  │                                                     │    │
+│  │  ┌───────────────┐  ┌───────────────┐            │    │
+│  │  │ Stochastic    │  │ Williams %R   │            │    │
+│  │  │  @Component   │  │  @Component   │  ...       │    │
+│  │  └───────────────┘  └───────────────┘            │    │
+│  │                                                     │    │
+│  │  ┌───────────────┐  ┌───────────────┐            │    │
+│  │  │ ADX Trend     │  │ Donchian Ch.  │            │    │
+│  │  │  @Component   │  │  @Component   │  ...       │    │
+│  │  └───────────────┘  └───────────────┘            │    │
+│  │                                                     │    │
+│  │  ┌───────────────┐  ┌───────────────┐            │    │
+│  │  │ ROC Momentum  │  │ VWAP          │            │    │
+│  │  │  @Component   │  │  @Component   │            │    │
+│  │  └───────────────┘  └───────────────┘            │    │
+│  │                                                     │    │
+│  │  All strategies implement: TradingStrategy         │    │
+│  │  Scheduler runs all strategies every minute        │    │
+│  └─────────────────────────┬──────────────────────────┘    │
 │                            ↓                                 │
 │                  ┌──────────────────┐                       │
 │                  │  Kafka: signals  │                       │
@@ -71,7 +95,11 @@ After Phase 2, you can:
 │                           ↓                                  │
 │                  ┌──────────────────┐                       │
 │                  │ Signal Aggregator│                       │
-│                  │     (Java)       │                       │
+│                  │  (Spring Boot)   │                       │
+│                  │  - Consumes      │                       │
+│                  │  - Deduplicates  │                       │
+│                  │  - Persists      │                       │
+│                  │  - REST API      │                       │
 │                  └────────┬─────────┘                       │
 │                           │                                  │
 │                           ↓                                  │
@@ -87,13 +115,24 @@ After Phase 2, you can:
 
 ## Why This Architecture?
 
-### Each Strategy = Separate Microservice
+### Single Strategy Engine (All Strategies Inside)
 
-**Benefits:**
-- **Deploy independently** - Update one strategy without restarting others
-- **Scale independently** - CPU-heavy strategies get more resources
-- **Fail independently** - One strategy crash doesn't kill others
-- **Easy to add** - New strategy = deploy another service, no changes to existing code
+**Why NOT separate microservices per strategy?**
+
+❌ **Reasons that DON'T apply here:**
+- **"Independent scaling"** - All strategies have identical CPU/memory profiles (query → calculate → produce)
+- **"Independent deployment"** - Strategies are algorithms, not features developed by separate teams
+- **"Failure isolation"** - If one strategy fails, it's usually a systemic issue (DB down, bad data) affecting all
+- **"Team autonomy"** - You're not Netflix with 50 teams, you're a solo dev or small team
+
+✅ **Why single service makes sense:**
+- **Pragmatic** - Free tier deployment possible (500 MB vs 2.75 GB)
+- **Simpler** - One codebase, one deployment, one log file to debug
+- **Zero duplication** - Models, configs, utilities shared naturally
+- **Easy to add strategies** - Just add a new `@Component` class implementing `TradingStrategy`
+- **Still modular** - Interface-based design allows extracting strategies later if needed
+
+**Mental model:** This is a **modular monolith**, not a distributed system. Strategies are plugins, not services.
 
 ### Strategies Query QuestDB (Not Kafka Stream)
 
@@ -191,66 +230,164 @@ After Phase 2, you can:
 
 ---
 
-## Strategy Service Pattern
+## Strategy Engine Structure
 
-All strategy services follow the same structure:
+Single Spring Boot service containing all strategies:
 
 ### Directory Structure
 ```
-ma-crossover-strategy/
+strategy-engine/
 ├── pom.xml
-└── src/main/java/com/quantstream/strategy/macrossover/
-    ├── MaCrossoverApplication.java
+└── src/main/java/com/quantstream/strategy/
+    ├── StrategyEngineApplication.java
     ├── config/
     │   ├── KafkaProducerConfig.java
     │   └── QuestDBConfig.java
     ├── model/
     │   ├── Tick.java
     │   └── Signal.java
-    ├── service/
-    │   └── MaCrossoverStrategy.java
-    └── scheduler/
-        └── StrategyScheduler.java
+    ├── framework/
+    │   ├── TradingStrategy.java      ← Interface (all strategies implement)
+    │   └── StrategyScheduler.java    ← Runs all strategies every minute
+    ├── utils/
+    │   └── IndicatorUtils.java       ← Shared calculations (MA, RSI, etc.)
+    └── strategies/
+        ├── MaCrossoverStrategy.java
+        ├── MacdStrategy.java
+        ├── RsiStrategy.java
+        ├── BollingerBandsStrategy.java
+        ├── StochasticStrategy.java
+        ├── WilliamsRStrategy.java
+        ├── AdxStrategy.java
+        ├── DonchianStrategy.java
+        ├── RocStrategy.java
+        └── VwapStrategy.java
 ```
 
 ### Core Components
 
-**1. Strategy Service (Example: MaCrossoverStrategy.java)**
+**1. Trading Strategy Interface**
 ```java
-@Service
-public class MaCrossoverStrategy {
+public interface TradingStrategy {
+    String getName();                    // "MA_CROSSOVER"
+    int getRequiredHistoryDays();        // 50
+    Signal analyze(String symbol);       // Core logic - returns Signal or null
+}
+```
+
+**2. Strategy Scheduler (Runs All Strategies)**
+```java
+@Component
+public class StrategyScheduler {
     
-    private final JdbcTemplate jdbcTemplate;
-    private final KafkaTemplate<String, Signal> kafkaTemplate;
+    @Autowired
+    private List<TradingStrategy> strategies;  // Spring auto-injects all
     
-    // Runs every minute
-    @Scheduled(fixedRate = 60000)
-    public void analyze() {
-        for (String symbol : SYMBOLS) {
-            // Query last 50 prices
-            List<Double> prices = queryPrices(symbol, 50);
-            
-            // Calculate indicators
-            double ma10 = calculateMA(prices, 10);
-            double ma50 = calculateMA(prices, 50);
-            
-            // Check for crossover
-            if (isGoldenCross(ma10, ma50)) {
-                Signal signal = new Signal(
-                    symbol, 
-                    "BUY", 
-                    "MA_CROSSOVER",
-                    0.85,
-                    Instant.now()
-                );
-                
-                // Produce to Kafka
-                kafkaTemplate.send("trading-signals", signal);
+    @Autowired
+    private KafkaTemplate<String, Signal> kafkaTemplate;
+    
+    private static final List<String> SYMBOLS = List.of(
+        "AAPL", "MSFT", "GOOGL", "TSLA", "AMZN",
+        "BTC", "ETH", "SOL", "AVAX", "MATIC"
+    );
+    
+    @Scheduled(fixedRate = 60000)  // Every minute
+    public void runAllStrategies() {
+        log.info("Running {} strategies for {} symbols", 
+                 strategies.size(), SYMBOLS.size());
+        
+        for (TradingStrategy strategy : strategies) {
+            for (String symbol : SYMBOLS) {
+                try {
+                    Signal signal = strategy.analyze(symbol);
+                    
+                    if (signal != null) {
+                        kafkaTemplate.send("trading-signals", signal);
+                        log.debug("Signal: {} {} from {}", 
+                                 signal.getAction(), symbol, strategy.getName());
+                    }
+                    
+                } catch (Exception e) {
+                    log.error("Strategy {} failed for {}: {}", 
+                             strategy.getName(), symbol, e.getMessage());
+                }
             }
         }
     }
 }
 ```
+
+**3. Example Strategy Implementation**
+```java
+@Component
+public class MaCrossoverStrategy implements TradingStrategy {
+    
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+    
+    @Autowired
+    private IndicatorUtils indicators;
+    
+    private final Map<String, Double> previousMA10 = new HashMap<>();
+    private final Map<String, Double> previousMA50 = new HashMap<>();
+    
+    @Override
+    public String getName() {
+        return "MA_CROSSOVER";
+    }
+    
+    @Override
+    public int getRequiredHistoryDays() {
+        return 50;
+    }
+    
+    @Override
+    public Signal analyze(String symbol) {
+        // Query last 50 prices
+        List<Double> prices = jdbcTemplate.query(
+            "SELECT price FROM ticks WHERE symbol = ? ORDER BY timestamp DESC LIMIT 50",
+            (rs, rowNum) -> rs.getDouble("price"),
+            symbol
+        );
+        
+        if (prices.size() < 50) {
+            return null;  // Not enough data
+        }
+        
+        // Calculate moving averages
+        double ma10 = indicators.calculateMA(prices, 10);
+        double ma50 = indicators.calculateMA(prices, 50);
+        
+        // Get previous values
+        Double prevMA10 = previousMA10.get(symbol);
+        Double prevMA50 = previousMA50.get(symbol);
+        
+        Signal signal = null;
+        
+        // Golden Cross - bullish
+        if (prevMA10 != null && ma10 > ma50 && prevMA10 <= prevMA50) {
+            signal = new Signal(symbol, "BUY", getName(), 0.85, Instant.now());
+        }
+        
+        // Death Cross - bearish
+        else if (prevMA10 != null && ma10 < ma50 && prevMA10 >= prevMA50) {
+            signal = new Signal(symbol, "SELL", getName(), 0.85, Instant.now());
+        }
+        
+        // Store for next run
+        previousMA10.put(symbol, ma10);
+        previousMA50.put(symbol, ma50);
+        
+        return signal;
+    }
+}
+```
+
+**Key Points:**
+- Each strategy is just a `@Component` implementing `TradingStrategy`
+- Spring auto-discovers all strategies and injects them into scheduler
+- Adding new strategy = add one class, zero config changes
+- Shared utilities (IndicatorUtils) avoid code duplication
 
 **2. Signal Model**
 ```java
@@ -266,11 +403,11 @@ public class Signal {
 }
 ```
 
-**3. Configuration (application.yml)**
+**4. Configuration (application.yml)**
 ```yaml
 spring:
   application:
-    name: ma-crossover-strategy
+    name: strategy-engine
 
   kafka:
     bootstrap-servers: localhost:9092
@@ -287,19 +424,10 @@ spring:
 server:
   port: 8083
 
-strategy:
-  symbols:
-    - AAPL
-    - MSFT
-    - GOOGL
-    - TSLA
-    - AMZN
-    - BTC
-    - ETH
-    - SOL
-    - AVAX
-    - MATIC
-  interval-ms: 60000  # Run every minute
+logging:
+  level:
+    com.quantstream: DEBUG
+    org.springframework: INFO
 ```
 
 ---
@@ -380,19 +508,23 @@ Step 7: Query signals
 
 ### **Phase 2A: Core Infrastructure (Week 1)**
 
-**Goal:** Get 1 strategy working end-to-end
+**Goal:** Get strategy engine working with 1 strategy
 
 **Tasks:**
-1. Create shared `strategy-framework` module (optional - shared utilities)
-2. Create `ma-crossover-strategy` service (first strategy)
-3. Create Kafka topic: `trading-signals`
-4. Create QuestDB table: `signals`
-5. Create `signal-aggregator` service
-6. Test: MA strategy produces signals → Aggregator persists → Query works
+1. Create `strategy-engine` Spring Boot service
+2. Create `TradingStrategy` interface
+3. Create `StrategyScheduler` (runs all strategies)
+4. Create `IndicatorUtils` (shared calculations)
+5. Implement `MaCrossoverStrategy` (first strategy)
+6. Create Kafka topic: `trading-signals`
+7. Create QuestDB table: `signals`
+8. Create `signal-aggregator` service
+9. Test: MA strategy produces signals → Aggregator persists → Query works
 
 **Deliverable:** 1 strategy producing signals, stored in QuestDB
 
 **Success criteria:**
+- [ ] Strategy engine starts successfully
 - [ ] MA Crossover strategy runs every minute
 - [ ] Queries QuestDB successfully
 - [ ] Produces signals to Kafka
@@ -401,31 +533,32 @@ Step 7: Query signals
 
 ---
 
-### **Phase 2B: Scale to 10 Strategies (Week 2)**
+### **Phase 2B: Add Remaining 9 Strategies (Week 2)**
 
-**Goal:** Implement remaining 9 strategies
+**Goal:** Implement 9 more strategies inside strategy-engine
 
 **Tasks:**
-7. Copy `ma-crossover-strategy` as template
-8. Implement MACD strategy
-9. Implement RSI strategy
-10. Implement Bollinger Bands strategy
-11. Implement Stochastic strategy
-12. Implement Williams %R strategy
-13. Implement ADX strategy
-14. Implement Donchian Channel strategy
-15. Implement ROC strategy
-16. Implement VWAP strategy
-17. Update docker-compose.yml with all 10 services
+10. Implement `MacdStrategy.java`
+11. Implement `RsiStrategy.java`
+12. Implement `BollingerBandsStrategy.java`
+13. Implement `StochasticStrategy.java`
+14. Implement `WilliamsRStrategy.java`
+15. Implement `AdxStrategy.java`
+16. Implement `DonchianStrategy.java`
+17. Implement `RocStrategy.java`
+18. Implement `VwapStrategy.java`
+19. Update `IndicatorUtils` with new calculations
+20. Test all strategies
 
-**Deliverable:** 10 strategies running in parallel
+**Deliverable:** 10 strategies running in single service
 
 **Success criteria:**
-- [ ] All 10 strategies start without errors
+- [ ] All 10 strategies auto-discovered by Spring
 - [ ] Each strategy produces signals independently
-- [ ] Signals table shows mix of strategies
+- [ ] Signals table shows mix of 10 strategies
 - [ ] No duplicate signals (aggregator deduplication works)
 - [ ] REST API shows signals from all 10 strategies
+- [ ] No errors in logs for 1 hour continuous run
 
 ---
 
@@ -433,34 +566,50 @@ Step 7: Query signals
 
 ```
 QuantStream/
-├── docker-compose.yml                  # Updated with new services
+├── docker-compose.yml                  # Updated with 2 new services
 ├── data-generator/                     # Phase 1 (unchanged)
 ├── database-consumer/                  # Phase 1 (unchanged)
 │
-├── strategy-framework/                 # NEW - Shared utilities (optional)
+├── strategy-engine/                    # NEW - All strategies inside
 │   ├── pom.xml
-│   └── src/main/java/com/quantstream/framework/
-│       ├── model/Signal.java
-│       ├── utils/IndicatorUtils.java   # MA, RSI calculations
-│       └── config/BaseKafkaConfig.java
+│   └── src/main/java/com/quantstream/strategy/
+│       ├── StrategyEngineApplication.java
+│       ├── config/
+│       │   ├── KafkaProducerConfig.java
+│       │   └── QuestDBConfig.java
+│       ├── model/
+│       │   ├── Tick.java
+│       │   └── Signal.java
+│       ├── framework/
+│       │   ├── TradingStrategy.java      ← Interface
+│       │   └── StrategyScheduler.java    ← Runs all strategies
+│       ├── utils/
+│       │   └── IndicatorUtils.java       ← Shared calculations
+│       └── strategies/
+│           ├── MaCrossoverStrategy.java
+│           ├── MacdStrategy.java
+│           ├── RsiStrategy.java
+│           ├── BollingerBandsStrategy.java
+│           ├── StochasticStrategy.java
+│           ├── WilliamsRStrategy.java
+│           ├── AdxStrategy.java
+│           ├── DonchianStrategy.java
+│           ├── RocStrategy.java
+│           └── VwapStrategy.java
 │
-├── ma-crossover-strategy/              # NEW - Strategy 1
-│   ├── pom.xml
-│   └── src/main/java/...
-│
-├── rsi-strategy/                       # NEW - Strategy 5
-│   ├── pom.xml
-│   └── src/main/java/...
-│
-├── bollinger-bands-strategy/           # NEW - Strategy 6
-│   ├── pom.xml
-│   └── src/main/java/...
-│
-... (7 more strategy services)
-│
-└── signal-aggregator/                  # NEW - Aggregator
+└── signal-aggregator/                  # NEW - Separate service
     ├── pom.xml
-    └── src/main/java/...
+    └── src/main/java/com/quantstream/aggregator/
+        ├── AggregatorApplication.java
+        ├── config/
+        │   ├── KafkaConsumerConfig.java
+        │   └── QuestDBConfig.java
+        ├── model/
+        │   └── Signal.java
+        ├── service/
+        │   └── SignalConsumer.java
+        └── controller/
+            └── SignalController.java    ← REST API
 ```
 
 ---
@@ -538,8 +687,8 @@ services:
     # ... existing config
   
   # Phase 2 services (new)
-  ma-crossover-strategy:
-    build: ./ma-crossover-strategy
+  strategy-engine:
+    build: ./strategy-engine
     ports:
       - "8083:8083"
     depends_on:
@@ -549,20 +698,10 @@ services:
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       SPRING_DATASOURCE_URL: jdbc:postgresql://questdb:8812/qdb
   
-  rsi-strategy:
-    build: ./rsi-strategy
-    ports:
-      - "8084:8084"
-    depends_on:
-      - kafka
-      - questdb
-  
-  # ... (8 more strategy services)
-  
   signal-aggregator:
     build: ./signal-aggregator
     ports:
-      - "8093:8093"
+      - "8084:8084"
     depends_on:
       - kafka
       - questdb
@@ -571,30 +710,24 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://questdb:8812/qdb
 ```
 
+**Total Services:** 6 (Zookeeper, Kafka, QuestDB, Generator, Consumer, Strategy-Engine, Aggregator)  
+**Memory estimate:** ~1.2 GB total (easily fits free tier)
+
 ---
 
 ## Development Strategy
 
-### Option 1: Sequential Development (Safer)
-1. Build MA Crossover strategy completely
-2. Test end-to-end
-3. Copy as template
-4. Implement next strategy
-5. Repeat 9 times
+**Iterative approach (recommended):**
 
-**Pros:** Lower risk, easier debugging
-**Cons:** Slower
+1. **Build framework first** (TradingStrategy interface + StrategyScheduler)
+2. **Implement 1 strategy** (MaCrossover) - validate end-to-end
+3. **Add 2-3 strategies** (RSI, Bollinger) - ensure pattern scales
+4. **Bulk add remaining** (7 more strategies) - copy & modify
 
-### Option 2: Parallel Development (Faster)
-1. Build MA Crossover strategy (prototype)
-2. Create 9 empty service skeletons
-3. Implement all 10 strategies in parallel
-4. Test together
-
-**Pros:** Faster
-**Cons:** Harder to debug if pattern is wrong
-
-**Recommendation:** **Sequential** for learning, **Parallel** if you're confident.
+**Key insight:** Since all strategies are in one codebase, you can:
+- Test incrementally (1 strategy → 3 strategies → 10 strategies)
+- Refactor shared code easily (all in one place)
+- Debug holistically (single application, single debugger)
 
 ---
 
@@ -602,7 +735,8 @@ services:
 
 Phase 2 is complete when:
 
-- [ ] All 10 strategy services start without errors
+- [ ] Strategy-engine service starts without errors
+- [ ] All 10 strategies auto-discovered by Spring (check logs)
 - [ ] Each strategy queries QuestDB successfully
 - [ ] Strategies produce signals to Kafka `trading-signals` topic
 - [ ] Aggregator consumes all signals
@@ -610,8 +744,9 @@ Phase 2 is complete when:
 - [ ] Signals persist to QuestDB `signals` table
 - [ ] REST API endpoints return correct data
 - [ ] Query works: `SELECT * FROM signals ORDER BY timestamp DESC LIMIT 100`
-- [ ] Can see mix of strategies generating different signals
+- [ ] Can see mix of 10 different strategies in signals table
 - [ ] System runs stably for 24 hours without crashes
+- [ ] Memory usage < 600 MB (strategy-engine + aggregator combined)
 
 ---
 
@@ -619,12 +754,14 @@ Phase 2 is complete when:
 
 | Aspect | Phase 1 | Phase 2 |
 |--------|---------|---------|
-| **Services** | 2 (generator + consumer) | 12 (10 strategies + aggregator + phase 1) |
+| **Services** | 2 (generator + consumer) | 4 (generator + consumer + strategy-engine + aggregator) |
 | **Kafka Topics** | 1 (`market-data`) | 2 (`market-data` + `trading-signals`) |
 | **QuestDB Tables** | 1 (`ticks`) | 2 (`ticks` + `signals`) |
 | **Data Flow** | Produce → Store | Read → Analyze → Produce → Store |
-| **Complexity** | Linear pipeline | Parallel analysis |
-| **CPU Usage** | Low | Medium (10 services calculating) |
+| **Complexity** | Linear pipeline | Parallel analysis (10 strategies) |
+| **CPU Usage** | Low | Medium (10 strategies calculating) |
+| **Memory** | ~400 MB | ~1.2 GB |
+| **Architecture** | Event-driven | Query-driven + Event-driven |
 
 ---
 
