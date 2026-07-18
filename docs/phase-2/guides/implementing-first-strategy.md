@@ -785,7 +785,7 @@ curl -X POST http://localhost:9001/exec \
 7. **Confidence scoring** - Consider multiple factors
 
 **Next Task:**
-Proceed to **Task 4: Build Signal Aggregator Service** (guide: `signal-aggregator-guide.md`)
+Proceed to **Task 4: Build Aggregator Service** (guide: `aggregator-service-guide.md`)
 
 ---
 

@@ -71,7 +71,7 @@ Open `tasks/TASK-LIST.md` and follow step-by-step:
 - Task 12: Create Strategy Scheduler
 - Task 13: Create Kafka Topic
 - Task 14: Test End-to-End
-- Task 15-19: Signal Aggregator Service
+- Task 15-19: Aggregator Service (Kafka Streams for candles)
 
 **Phase 2B: Scale to 10 Strategies (Week 2)**
 - Task 20-28: Implement 9 more strategies
@@ -110,13 +110,13 @@ Refer to guides when implementing specific tasks:
 
 ---
 
-### Signal Aggregator (Separate Service)
+### Aggregator Service (Separate Service)
 
-**Decision:** Signal aggregator is a SEPARATE service from strategy engine.
+**Decision:** Aggregator service creates OHLC candles from raw ticks for frontend visualization.
 
 **Why:**
-- Different responsibility (CQRS: strategies write, aggregator reads + API)
-- Different scaling profile (CPU-bound vs I/O-bound)
+- Different responsibility (Kafka Streams windowing vs strategy analysis)
+- Different scaling profile (streaming vs batch query)
 - Different failure domain (aggregator down doesn't stop signal generation)
 
 ---
@@ -126,7 +126,7 @@ Refer to guides when implementing specific tasks:
 | Service | Port | Purpose | Language |
 |---------|------|---------|----------|
 | strategy-engine | 8083 | Run 10 strategies, produce signals | Java/Spring Boot |
-| signal-aggregator | 8084 | Consume signals, persist, REST API | Java/Spring Boot |
+| aggregator | 8084 | Create OHLC candles from ticks (Kafka Streams) | Java/Spring Boot |
 
 **Total:** 2 new services (+ 2 from Phase 1 = 4 total application services)
 
@@ -139,17 +139,21 @@ Phase 1 (Existing):
 data-generator → Kafka (market-data) → database-consumer → QuestDB (ticks table)
 
 Phase 2 (New):
+Kafka (market-data)
+    ↓ (consume)
+Aggregator (Kafka Streams)
+    ↓ (produce)
+Kafka (candles-1m topic)
+    ↓ (consume)
+database-consumer (extended) → QuestDB (candles_1m table)
+
 QuestDB (ticks table)
     ↓ (strategies query)
 strategy-engine (10 strategies inside)
     ↓ (produce)
 Kafka (trading-signals topic)
     ↓ (consume)
-signal-aggregator
-    ↓ (persist)
-QuestDB (signals table)
-    ↓ (expose)
-REST API (GET /api/signals)
+database-consumer (extended) → QuestDB (signals table)
 ```
 
 ---

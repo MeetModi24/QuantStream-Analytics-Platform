@@ -1,5 +1,0 @@
-com/quantstream/strategy/config/KafkaProducerConfig.class
-com/quantstream/strategy/StrategyEngineApplication.class
-com/quantstream/strategy/config/QuestDBConfig.class
-com/quantstream/strategy/model/Tick.class
-com/quantstream/strategy/model/Signal.class

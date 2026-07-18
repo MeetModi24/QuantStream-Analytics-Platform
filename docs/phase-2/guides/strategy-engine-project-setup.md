@@ -342,7 +342,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 public class StrategyEngineApplication {
 
     public static void main(String[] args) {
-        SpringApplication.run(StrategyEngineApplication.java, args);
+        SpringApplication.run(StrategyEngineApplication.class, args);
     }
 }
 ```
@@ -561,14 +561,23 @@ import javax.sql.DataSource;
 @Configuration
 public class QuestDBConfig {
 
+    @Value("${spring.datasource.url}")
+    private String jdbcUrl;
+    
+    @Value("${spring.datasource.username}")
+    private String username;
+    
+    @Value("${spring.datasource.password}")
+    private String password;
+
     @Bean
     public DataSource dataSource() {
         HikariConfig config = new HikariConfig();
         
-        // Connection details
-        config.setJdbcUrl("jdbc:postgresql://localhost:8812/qdb");
-        config.setUsername("admin");
-        config.setPassword("quest");
+        // Connection details (from application.yml)
+        config.setJdbcUrl(jdbcUrl);
+        config.setUsername(username);
+        config.setPassword(password);
         config.setDriverClassName("org.postgresql.Driver");
 
         // Bypass transaction support checks
@@ -622,6 +631,7 @@ package com.quantstream.strategy.config;
 import com.quantstream.strategy.model.Signal;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.common.serialization.StringSerializer;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.core.DefaultKafkaProducerFactory;
@@ -636,17 +646,20 @@ import java.util.Map;
  * Kafka producer configuration for sending trading signals.
  * 
  * Producer sends Signal objects as JSON to "trading-signals" topic.
- * Signal-aggregator service consumes these signals.
+ * Database-consumer service consumes and writes these signals to QuestDB.
  */
 @Configuration
 public class KafkaProducerConfig {
+
+    @Value("${spring.kafka.bootstrap-servers}")
+    private String bootstrapServers;
 
     @Bean
     public ProducerFactory<String, Signal> producerFactory() {
         Map<String, Object> configProps = new HashMap<>();
         
-        // Kafka broker address
-        configProps.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9092");
+        // Kafka broker address (from application.yml)
+        configProps.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
         
         // Serializers
         configProps.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);

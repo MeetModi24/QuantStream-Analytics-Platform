@@ -51,7 +51,7 @@ This guide implements the **core framework** that all 10 strategies will use:
                         ↓
                Kafka: trading-signals
                         ↓
-           signal-aggregator (Task 4)
+            database-consumer (Task 5 - extended)
 ```
 
 ---
@@ -609,10 +609,13 @@ import com.quantstream.strategy.model.Signal;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import jakarta.annotation.PostConstruct;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -648,20 +651,34 @@ public class StrategyScheduler {
     private KafkaTemplate<String, Signal> kafkaTemplate;
     
     /**
-     * Symbols to analyze.
+     * Symbols to analyze (injected from application.yml).
      * 
-     * 5 stocks + 5 crypto = 10 symbols
-     * Can be externalized to application.yml in production.
+     * Format in application.yml:
+     *   strategy.symbols: AAPL,MSFT,GOOGL,TSLA,AMZN,BTC,ETH,SOL,AVAX,MATIC
+     * 
+     * Benefits:
+     * - No recompilation needed to change symbols
+     * - Different symbols per environment (dev/prod)
+     * - Easy to add/remove symbols via config
      */
-    private static final List<String> SYMBOLS = List.of(
-        "AAPL", "MSFT", "GOOGL", "TSLA", "AMZN",  // Stocks
-        "BTC", "ETH", "SOL", "AVAX", "MATIC"       // Crypto
-    );
+    @Value("${strategy.symbols}")
+    private String symbolsConfig;
+    
+    private List<String> symbols;
+    
+    /**
+     * Initialize symbols list on startup.
+     */
+    @PostConstruct
+    public void init() {
+        this.symbols = Arrays.asList(symbolsConfig.split(","));
+        log.info("Initialized with {} symbols: {}", symbols.size(), symbols);
+    }
     
     /**
      * Main scheduled task.
      * 
-     * Runs every 60 seconds (60000 milliseconds).
+     * Runs every 60 seconds (configurable via ${strategy.execution.interval-ms}).
      * 
      * Execution:
      * - For each strategy
@@ -674,16 +691,16 @@ public class StrategyScheduler {
      * - Each analysis: ~10ms (DB query + calculation)
      * - Total: ~1 second per cycle
      */
-    @Scheduled(fixedRate = 60000)
+    @Scheduled(fixedRateString = "${strategy.execution.interval-ms}")
     public void runAllStrategies() {
         log.info("=== Running {} strategies for {} symbols ===", 
-                strategies.size(), SYMBOLS.size());
+                strategies.size(), symbols.size());
         
         int signalsGenerated = 0;
         int errorsEncountered = 0;
         
         for (TradingStrategy strategy : strategies) {
-            for (String symbol : SYMBOLS) {
+            for (String symbol : symbols) {
                 try {
                     Signal signal = strategy.analyze(symbol);
                     
@@ -804,7 +821,6 @@ trading-signals
 **Partitions** allow parallel consumption. Multiple consumers can read different partitions simultaneously.
 
 **Our case:**
-- Single signal-aggregator consumer
 - No need for parallel consumption
 - 1 partition = simplest setup
 

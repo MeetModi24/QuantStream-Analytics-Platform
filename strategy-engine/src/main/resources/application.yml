@@ -28,6 +28,11 @@ spring:
 server:
   port: 8083
 
+strategy:
+  symbols: AAPL,MSFT,GOOGL,TSLA,AMZN,BTC,ETH,SOL,AVAX,MATIC
+  execution:
+    interval-ms: 60000  # Run every 60 seconds
+
 logging:
   level:
     com.quantstream: DEBUG

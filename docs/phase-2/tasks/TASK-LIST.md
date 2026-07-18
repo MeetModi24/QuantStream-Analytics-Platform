@@ -2,9 +2,12 @@
 
 ## Overview
 
-Phase 2 builds the strategy engine that analyzes tick data and generates trading signals.
+Phase 2 builds the **intelligence layer** that transforms raw market data into actionable insights:
+- **Aggregator:** Creates OHLC candles for frontend visualization
+- **Strategy Engine:** 10 alpha strategies generating trading signals
+- **Extended Consumer:** Persists candles + signals to QuestDB
 
-**Total Time Estimate:** 10-12 hours  
+**Total Time Estimate:** 12-16 hours  
 **Approach:** Sequential milestones with end-to-end testing at each stage
 
 ---
@@ -25,11 +28,12 @@ Before starting Phase 2:
 | Task | Description | Guide | Time |
 |------|-------------|-------|------|
 | 1 | Setup Strategy Engine Project | strategy-engine-project-setup.md | 1 hour |
-| 2 | Build Core Framework | strategy-framework-guide.md | 2 hours |
+| 2 | Build Strategy Framework | strategy-framework-guide.md | 2 hours |
 | 3 | Implement First Strategy (MA Crossover) | implementing-first-strategy.md | 2 hours |
-| 4 | Build Signal Aggregator Service | signal-aggregator-guide.md | 2-3 hours |
-| 5 | Add Remaining 9 Strategies | adding-more-strategies.md | 3-4 hours |
-| 6 | Integration Testing & Deployment | testing-and-deployment.md | 1 hour |
+| 4 | Build Aggregator Service (Kafka Streams) | aggregator-service-guide.md | 2-3 hours |
+| 5 | Extend Database Consumer | extending-database-consumer.md | 1 hour |
+| 6 | Implement Remaining 9 Strategies | implementing-remaining-strategies.md | 4-5 hours |
+| 7 | Integration Testing & Validation | integration-testing-guide.md | 1 hour |
 
 ---
 
@@ -122,44 +126,105 @@ Follow **`guides/implementing-first-strategy.md`** for step-by-step implementati
 
 ---
 
-## Task 4: Build Signal Aggregator Service
+## Task 4: Build Aggregator Service (Kafka Streams)
 
-**Objective:** Create service that consumes signals and provides REST API.
+**Objective:** Create OHLC candles from raw ticks for frontend visualization.
 
 ### What You'll Build:
-- New Spring Boot project: `signal-aggregator`
-- QuestDB `signals` table
-- Kafka consumer for `trading-signals` topic
-- Deduplication logic (avoid duplicate signals)
-- REST API endpoints:
-  - `GET /api/signals` - List all signals
-  - `GET /api/signals?symbol=AAPL` - Filter by symbol
-  - `GET /api/signals/strategy/{name}` - Filter by strategy
-  - `GET /api/signals/latest` - Recent signals
-  - `GET /api/signals/count` - Signal counts by strategy
+- New Spring Boot project: `aggregator`
+- Kafka Streams application with windowed aggregation
+- 1-minute tumbling windows
+- Calculate OHLC (Open, High, Low, Close) + Volume
+- Produce candles to Kafka topic `candles-1m`
 
 ### Key Concepts:
-- Kafka consumer configuration
-- Manual vs auto commit
-- REST API design
-- SQL queries in QuestDB
+- Kafka Streams DSL (KStream, KTable, TimeWindows)
+- Stateful processing (windowing, aggregation)
+- Tumbling windows vs hopping windows
+- Serialization (JSON Serde for custom types)
+- State stores and changelog topics
+
+### Why Separate Service:
+- **Purpose:** Create candles for **frontend charts** (not strategies)
+- **Processing model:** Stateful stream processing (not queries)
+- **Technology:** Kafka Streams (event-time windowing)
+- **Failure isolation:** Aggregator down → charts break, strategies continue
 
 ### Success Criteria:
 - [ ] Aggregator project compiles
-- [ ] Consumes signals from Kafka
-- [ ] Persists signals to QuestDB
-- [ ] Deduplication works (no duplicates within 5 min)
-- [ ] REST API returns correct data
-- [ ] Can query signals: `SELECT * FROM signals LIMIT 10`
+- [ ] Consumes from `market-data` topic
+- [ ] Produces to `candles-1m` topic
+- [ ] Candles emit at end of each minute
+- [ ] OHLC values correct (verified manually)
+- [ ] Can see candles: `docker exec kafka kafka-console-consumer --topic candles-1m`
+- [ ] State restored after restart
 
 ### Guide:
-Follow **`guides/signal-aggregator-guide.md`** for complete implementation.
+Follow **`guides/aggregator-service-guide.md`** for complete implementation.
 
 **Estimated Time:** 2-3 hours
 
 ---
 
-## Task 5: Add Remaining 9 Strategies
+## Task 5: Extend Database Consumer
+
+**Objective:** Make database-consumer write candles + signals to QuestDB.
+
+### What You'll Modify:
+- Existing `database-consumer` project
+- Add consumer for `candles-1m` topic → writes to `candles_1m` table
+- Add consumer for `trading-signals` topic → writes to `signals` table
+- Create QuestDB tables for candles and signals
+- Update consumer group IDs
+
+### What You'll Build:
+**New Tables:**
+```sql
+CREATE TABLE candles_1m (
+    symbol SYMBOL,
+    open DOUBLE,
+    high DOUBLE,
+    low DOUBLE,
+    close DOUBLE,
+    volume LONG,
+    timestamp TIMESTAMP
+) TIMESTAMP(timestamp) PARTITION BY DAY;
+
+CREATE TABLE signals (
+    symbol SYMBOL,
+    action SYMBOL,
+    strategy_name SYMBOL,
+    confidence DOUBLE,
+    timestamp TIMESTAMP
+) TIMESTAMP(timestamp) PARTITION BY DAY;
+```
+
+**New Consumers:**
+- `CandleConsumer` - consumes `candles-1m`, writes to QuestDB
+- `SignalConsumer` - consumes `trading-signals`, writes to QuestDB
+
+### Key Concepts:
+- Multiple Kafka consumers in single application
+- Batch writing for candles (high volume)
+- Real-time writing for signals (low volume)
+- Separate consumer groups (independent offset tracking)
+
+### Success Criteria:
+- [ ] Two new QuestDB tables created
+- [ ] Candles appear in `candles_1m` table
+- [ ] Signals appear in `signals` table
+- [ ] Can query: `SELECT * FROM candles_1m WHERE symbol='AAPL' LATEST BY symbol`
+- [ ] Can query: `SELECT * FROM signals ORDER BY timestamp DESC LIMIT 10`
+- [ ] No consumer lag (check Kafka consumer group offsets)
+
+### Guide:
+Follow **`guides/extending-database-consumer.md`** for implementation.
+
+**Estimated Time:** 1 hour
+
+---
+
+## Task 6: Implement Remaining 9 Strategies
 
 **Objective:** Scale from 1 strategy to 10 strategies.
 
@@ -203,9 +268,9 @@ Follow **`guides/adding-more-strategies.md`** for patterns and implementation.
 
 ---
 
-## Task 6: Integration Testing & Deployment
+## Task 7: Integration Testing & Validation
 
-**Objective:** Verify complete system works end-to-end and prepare for deployment.
+**Objective:** Verify complete Phase 2 works end-to-end.
 
 ### What You'll Do:
 - Update `docker-compose.yml` with new services
@@ -233,7 +298,7 @@ Follow **`guides/adding-more-strategies.md`** for patterns and implementation.
 - [ ] Can restart services without data loss
 
 ### Guide:
-Follow **`guides/testing-and-deployment.md`** for comprehensive testing.
+Follow **`guides/integration-testing-guide.md`** for comprehensive testing.
 
 **Estimated Time:** 1 hour (mostly monitoring)
 
@@ -242,29 +307,41 @@ Follow **`guides/testing-and-deployment.md`** for comprehensive testing.
 ## Phase 2 Complete! 🎉
 
 **What You've Built:**
+- ✅ Aggregator service (creates OHLC candles for frontend)
 - ✅ Strategy engine with 10 trading strategies
-- ✅ Interface-based design (easy to extend)
-- ✅ Signal aggregator with REST API
-- ✅ End-to-end pipeline: ticks → analysis → signals → storage
+- ✅ Extended database consumer (writes candles + signals)
+- ✅ End-to-end intelligence layer
 
 **System Architecture:**
 ```
 Docker Compose:
 ├── Zookeeper
-├── Kafka (2 topics: market-data, trading-signals)
-└── QuestDB (2 tables: ticks, signals)
+├── Kafka (3 topics: market-data, candles-1m, trading-signals)
+└── QuestDB (3 tables: ticks, candles_1m, signals)
 
 Application Services:
 ├── data-generator (Phase 1)
-├── database-consumer (Phase 1)
-├── strategy-engine (Phase 2) - 10 strategies inside
-└── signal-aggregator (Phase 2) - REST API
+├── database-consumer (Phase 1, extended Phase 2)
+├── aggregator (Phase 2) - Creates candles
+└── strategy-engine (Phase 2) - 10 strategies inside
+```
+
+**Data Flow:**
+```
+Generator → market-data → Consumer → ticks (QuestDB)
+                ↓                          ↓
+         Aggregator (Kafka Streams)   Strategies (query)
+                ↓                          ↓
+            candles-1m               trading-signals
+                ↓                          ↓
+         Consumer (extended)        Consumer (extended)
+                ↓                          ↓
+         candles_1m (QuestDB)       signals (QuestDB)
 ```
 
 **Next Phase:**
-- Phase 3: Python backtester + React frontend
-- Evaluate strategy performance
-- Build trading dashboard
+- Phase 3: Backtester (evaluate strategy performance)
+- Phase 4: API Gateway + React frontend (visualize + interact)
 
 ---
 

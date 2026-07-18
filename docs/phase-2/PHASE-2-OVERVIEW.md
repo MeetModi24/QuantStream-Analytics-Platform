@@ -11,15 +11,21 @@ Build multiple trading strategy microservices that analyze stored tick data and 
 ## What We're Building
 
 ```
-QuestDB (27k+ ticks stored from Phase 1)
+Kafka Topic: "market-data"
+    ↓ (consumed by)
+Aggregator (Kafka Streams - creates OHLC candles)
+    ↓ (produces to)
+Kafka Topic: "candles-1m"
+    ↓ (consumed by)
+database-consumer → QuestDB Table: candles_1m
+
+QuestDB (ticks table)
     ↓ (strategies query via SQL)
 Strategy Engine (1 Java service, 10 strategies inside)
     ↓ (produce signals to)
 Kafka Topic: "trading-signals"
     ↓ (consumed by)
-Signal Aggregator (1 Java service)
-    ↓ (writes to)
-QuestDB Table: signals
+database-consumer → QuestDB Table: signals
 ```
 
 **Key Architectural Decision:** All 10 strategies run inside a **single** `strategy-engine` service.
@@ -31,10 +37,10 @@ QuestDB Table: signals
 - No organizational need (not separate teams)
 - Easier development, debugging, and deployment
 
-**Why signal-aggregator is separate:**
-- Different responsibility (CQRS: strategies = write, aggregator = read + API)
-- Different scaling profile (CPU-bound vs I/O-bound)
-- Different failure domain (aggregator down doesn't stop signal generation)
+**Why Aggregator is separate:**
+- Different responsibility (Kafka Streams windowing for ticks → candles vs strategy signal generation)
+- Different scaling profile (streaming data transformation vs batch SQL queries)
+- Different failure domain (aggregator down doesn't stop signal generation or tick storage)
 
 ---
 
@@ -89,23 +95,21 @@ After Phase 2, you can:
 │  └─────────────────────────┬──────────────────────────┘    │
 │                            ↓                                 │
 │                  ┌──────────────────┐                       │
-│                  │  Kafka: signals  │                       │
+│                  │Kafka: signals    │                       │
 │                  └────────┬─────────┘                       │
 │                           │                                  │
 │                           ↓                                  │
 │                  ┌──────────────────┐                       │
-│                  │ Signal Aggregator│                       │
-│                  │  (Spring Boot)   │                       │
-│                  │  - Consumes      │                       │
-│                  │  - Deduplicates  │                       │
-│                  │  - Persists      │                       │
-│                  │  - REST API      │                       │
+│                  │database-consumer │                       │
+│                  │ (extended)       │                       │
+│                  │  - Writes signals│                       │
+│                  │  - Writes candles│                       │
 │                  └────────┬─────────┘                       │
 │                           │                                  │
 │                           ↓                                  │
 │                  ┌──────────────────┐                       │
 │                  │  QuestDB: signals│                       │
-│                  │      table       │                       │
+│                  │  + candles_1m    │                       │
 │                  └──────────────────┘                       │
 │                                                              │
 └─────────────────────────────────────────────────────────────┘
@@ -432,22 +436,28 @@ logging:
 
 ---
 
-## Signal Aggregator Service
+## Aggregator Service (Kafka Streams)
 
-**Purpose:** Consume signals from all strategies, deduplicate, and persist to QuestDB.
+**Purpose:** Create 1-minute OHLC candles from raw ticks for frontend chart visualization.
 
 ### Key Responsibilities
-1. **Consume** from `trading-signals` Kafka topic
-2. **Deduplicate** - Same symbol + strategy within 5 minutes = ignore
-3. **Persist** - Write to QuestDB `signals` table
-4. **Expose REST API** - Query signals by symbol, strategy, time range
+1. **Consume** from `market-data` Kafka topic (raw ticks)
+2. **Window** - Group ticks into 1-minute time windows
+3. **Aggregate** - Calculate Open, High, Low, Close, Volume per window
+4. **Produce** - Emit candles to `candles-1m` topic
+5. **Database Consumer** - Extended to write candles + signals to QuestDB
 
-### REST API Endpoints
-```
-GET /api/signals?symbol=AAPL&limit=100
-GET /api/signals/strategy/{strategyName}
-GET /api/signals/latest
-GET /api/signals/count
+### QuestDB Schema: `candles_1m` Table
+```sql
+CREATE TABLE IF NOT EXISTS candles_1m (
+    symbol SYMBOL,
+    open DOUBLE,
+    high DOUBLE,
+    low DOUBLE,
+    close DOUBLE,
+    volume LONG,
+    timestamp TIMESTAMP
+) TIMESTAMP(timestamp) PARTITION BY DAY;
 ```
 
 ### QuestDB Schema: `signals` Table
@@ -492,9 +502,8 @@ Step 5: Produce to Kafka
           "timestamp": "2026-07-17T10:30:00Z"
         }
 
-Step 6: Aggregator Consumes
-        Checks: Is this duplicate? (No)
-        Writes to QuestDB signals table
+Step 6: Database Consumer (Extended) Consumes
+        Writes signal to QuestDB signals table
 
 Step 7: Query signals
         SELECT * FROM signals 
@@ -516,10 +525,11 @@ Step 7: Query signals
 3. Create `StrategyScheduler` (runs all strategies)
 4. Create `IndicatorUtils` (shared calculations)
 5. Implement `MaCrossoverStrategy` (first strategy)
-6. Create Kafka topic: `trading-signals`
-7. Create QuestDB table: `signals`
-8. Create `signal-aggregator` service
-9. Test: MA strategy produces signals → Aggregator persists → Query works
+6. Create Kafka topics: `trading-signals`, `candles-1m`
+7. Create QuestDB tables: `signals`, `candles_1m`
+8. Build `aggregator` service (Kafka Streams for candles)
+9. Extend `database-consumer` to write candles + signals
+10. Test: MA strategy produces signals → Consumer persists → Query works
 
 **Deliverable:** 1 strategy producing signals, stored in QuestDB
 
@@ -528,8 +538,8 @@ Step 7: Query signals
 - [ ] MA Crossover strategy runs every minute
 - [ ] Queries QuestDB successfully
 - [ ] Produces signals to Kafka
-- [ ] Aggregator consumes and persists signals
-- [ ] REST API returns signals
+- [ ] Aggregator creates candles from ticks
+- [ ] Database consumer persists candles + signals
 
 ---
 
@@ -556,8 +566,8 @@ Step 7: Query signals
 - [ ] All 10 strategies auto-discovered by Spring
 - [ ] Each strategy produces signals independently
 - [ ] Signals table shows mix of 10 strategies
-- [ ] No duplicate signals (aggregator deduplication works)
-- [ ] REST API shows signals from all 10 strategies
+- [ ] Candles table populated with 1-min OHLC data
+- [ ] Frontend can query candles for chart display
 - [ ] No errors in logs for 1 hour continuous run
 
 ---
@@ -597,19 +607,17 @@ QuantStream/
 │           ├── RocStrategy.java
 │           └── VwapStrategy.java
 │
-└── signal-aggregator/                  # NEW - Separate service
+└── aggregator/                         # NEW - Kafka Streams for candles
     ├── pom.xml
     └── src/main/java/com/quantstream/aggregator/
         ├── AggregatorApplication.java
         ├── config/
-        │   ├── KafkaConsumerConfig.java
-        │   └── QuestDBConfig.java
+        │   └── KafkaStreamsConfig.java
         ├── model/
-        │   └── Signal.java
-        ├── service/
-        │   └── SignalConsumer.java
-        └── controller/
-            └── SignalController.java    ← REST API
+        │   ├── Tick.java
+        │   └── Candle.java
+        └── topology/
+            └── CandleAggregationTopology.java  ← Kafka Streams windowing
 ```
 
 ---
@@ -698,20 +706,18 @@ services:
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       SPRING_DATASOURCE_URL: jdbc:postgresql://questdb:8812/qdb
   
-  signal-aggregator:
-    build: ./signal-aggregator
+  aggregator:
+    build: ./aggregator
     ports:
       - "8084:8084"
     depends_on:
       - kafka
-      - questdb
     environment:
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      SPRING_DATASOURCE_URL: jdbc:postgresql://questdb:8812/qdb
 ```
 
-**Total Services:** 6 (Zookeeper, Kafka, QuestDB, Generator, Consumer, Strategy-Engine, Aggregator)  
-**Memory estimate:** ~1.2 GB total (easily fits free tier)
+**Total Services:** 7 (Zookeeper, Kafka, QuestDB, Generator, Consumer, Strategy-Engine, Aggregator)  
+**Memory estimate:** ~1.3 GB total (easily fits free tier)
 
 ---
 
@@ -739,10 +745,10 @@ Phase 2 is complete when:
 - [ ] All 10 strategies auto-discovered by Spring (check logs)
 - [ ] Each strategy queries QuestDB successfully
 - [ ] Strategies produce signals to Kafka `trading-signals` topic
-- [ ] Aggregator consumes all signals
-- [ ] Aggregator deduplicates correctly (no duplicate signals within 5 min)
-- [ ] Signals persist to QuestDB `signals` table
-- [ ] REST API endpoints return correct data
+- [ ] Aggregator creates candles from ticks
+- [ ] Candles written to `candles-1m` Kafka topic
+- [ ] Database consumer writes candles to QuestDB
+- [ ] Database consumer writes signals to QuestDB
 - [ ] Query works: `SELECT * FROM signals ORDER BY timestamp DESC LIMIT 100`
 - [ ] Can see mix of 10 different strategies in signals table
 - [ ] System runs stably for 24 hours without crashes
@@ -755,8 +761,8 @@ Phase 2 is complete when:
 | Aspect | Phase 1 | Phase 2 |
 |--------|---------|---------|
 | **Services** | 2 (generator + consumer) | 4 (generator + consumer + strategy-engine + aggregator) |
-| **Kafka Topics** | 1 (`market-data`) | 2 (`market-data` + `trading-signals`) |
-| **QuestDB Tables** | 1 (`ticks`) | 2 (`ticks` + `signals`) |
+| **Kafka Topics** | 1 (`market-data`) | 3 (`market-data` + `candles-1m` + `trading-signals`) |
+| **QuestDB Tables** | 1 (`ticks`) | 3 (`ticks` + `candles_1m` + `signals`) |
 | **Data Flow** | Produce → Store | Read → Analyze → Produce → Store |
 | **Complexity** | Linear pipeline | Parallel analysis (10 strategies) |
 | **CPU Usage** | Low | Medium (10 strategies calculating) |
