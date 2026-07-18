@@ -1,0 +1,27 @@
+spring:
+  application:
+    name: aggregator
+
+  kafka:
+    bootstrap-servers: localhost:9092
+    streams:
+      application-id: aggregator-service
+      # State store directory
+      state-dir: /tmp/kafka-streams
+      # Processing guarantee (exactly-once semantics)
+      processing:
+        guarantee: exactly_once_v2
+      properties:
+        # Commit interval (how often to flush state)
+        commit.interval.ms: 1000
+        # Windowing grace period (late events)
+        window.grace.ms: 5000
+
+server:
+  port: 8084
+
+logging:
+  level:
+    com.quantstream: DEBUG
+    org.apache.kafka.streams: INFO
+    org.springframework.kafka: INFO
