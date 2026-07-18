@@ -382,9 +382,122 @@ public class IndicatorUtils {
     }
     
     // ============================================
+    // ADX (Average Directional Index)
+    // ============================================
+
+    /**
+     * Average Directional Index
+     *
+     * Measures trend strength (not direction).
+     *
+     * Components:
+     * - +DI: Positive Directional Indicator
+     * - -DI: Negative Directional Indicator
+     * - ADX: Smoothed average of DX values
+     *
+     * Range: 0 to 100
+     * - ADX < 20: Weak trend
+     * - ADX 20-40: Strong trend
+     * - ADX > 40: Very strong trend
+     *
+     * Signals:
+     * - +DI crosses above -DI: Uptrend
+     * - -DI crosses above +DI: Downtrend
+     *
+     * @param prices Historical prices (most recent first)
+     * @param period Typically 14
+     * @return ADX object
+     */
+    public ADX calculateADX(List<Double> prices, int period) {
+        if (prices.size() < period + 1) {
+            throw new IllegalArgumentException(
+                String.format("Need at least %d prices for ADX(%d), got %d",
+                    period + 1, period, prices.size())
+            );
+        }
+
+        // Calculate True Range (TR) and Directional Movement (DM)
+        List<Double> trValues = new ArrayList<>();
+        List<Double> plusDM = new ArrayList<>();
+        List<Double> minusDM = new ArrayList<>();
+
+        for (int i = 0; i < period; i++) {
+            double high = prices.get(i);
+            double low = prices.get(i);
+            double prevClose = prices.get(i + 1);
+
+            // True Range = max(high-low, abs(high-prevClose), abs(low-prevClose))
+            double tr = Math.max(high - low,
+                         Math.max(Math.abs(high - prevClose), Math.abs(low - prevClose)));
+            trValues.add(tr);
+
+            // Directional Movement
+            double upMove = prices.get(i) - prices.get(i + 1);
+            double downMove = prices.get(i + 1) - prices.get(i);
+
+            plusDM.add(upMove > downMove && upMove > 0 ? upMove : 0);
+            minusDM.add(downMove > upMove && downMove > 0 ? downMove : 0);
+        }
+
+        // Calculate smoothed averages
+        double avgTR = trValues.stream().mapToDouble(Double::doubleValue).average().orElse(1.0);
+        double avgPlusDM = plusDM.stream().mapToDouble(Double::doubleValue).average().orElse(0.0);
+        double avgMinusDM = minusDM.stream().mapToDouble(Double::doubleValue).average().orElse(0.0);
+
+        // Prevent division by zero
+        if (avgTR == 0) avgTR = 1.0;
+
+        // Directional Indicators
+        double plusDI = (avgPlusDM / avgTR) * 100;
+        double minusDI = (avgMinusDM / avgTR) * 100;
+
+        // ADX calculation (simplified - full version needs smoothing)
+        double dx = Math.abs(plusDI - minusDI) / (plusDI + minusDI + 0.0001) * 100;
+
+        return new ADX(dx, plusDI, minusDI);
+    }
+
+    // ============================================
+    // Donchian Channel
+    // ============================================
+
+    /**
+     * Donchian Channel
+     *
+     * Components:
+     * - Upper Channel: Highest high over N periods
+     * - Lower Channel: Lowest low over N periods
+     * - Middle Channel: (Upper + Lower) / 2
+     *
+     * Use case:
+     * - Price breaks above upper channel → Bullish breakout
+     * - Price breaks below lower channel → Bearish breakout
+     * - Narrow channel → Low volatility
+     *
+     * @param prices Historical prices (most recent first)
+     * @param period Typically 20
+     * @return DonchianChannel object
+     */
+    public DonchianChannel calculateDonchianChannel(List<Double> prices, int period) {
+        if (prices.size() < period) {
+            throw new IllegalArgumentException(
+                String.format("Not enough data: need %d prices, got %d", period, prices.size())
+            );
+        }
+
+        List<Double> periodPrices = prices.subList(0, period);
+
+        double upper = Collections.max(periodPrices);
+        double lower = Collections.min(periodPrices);
+        double middle = (upper + lower) / 2.0;
+
+        return new DonchianChannel(upper, middle, lower);
+    }
+
+    // ============================================
     // Supporting Data Classes
     // ============================================
-    
+
     @Data
     @NoArgsConstructor
     @AllArgsConstructor
@@ -393,7 +506,7 @@ public class IndicatorUtils {
         private double middle;
         private double lower;
     }
-    
+
     @Data
     @NoArgsConstructor
     @AllArgsConstructor
@@ -402,12 +515,30 @@ public class IndicatorUtils {
         private double signal;      // Signal line
         private double histogram;   // MACD - Signal
     }
-    
+
     @Data
     @NoArgsConstructor
     @AllArgsConstructor
     public static class Stochastic {
         private double percentK;
         private double percentD;
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class ADX {
+        private double adx;         // ADX value (trend strength)
+        private double plusDI;      // +DI (positive directional indicator)
+        private double minusDI;     // -DI (negative directional indicator)
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class DonchianChannel {
+        private double upper;
+        private double middle;
+        private double lower;
     }
 }
