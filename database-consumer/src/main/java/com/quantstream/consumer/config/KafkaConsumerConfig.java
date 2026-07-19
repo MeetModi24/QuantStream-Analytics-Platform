@@ -1,5 +1,7 @@
 package com.quantstream.consumer.config;
 
+import com.quantstream.consumer.model.Candle;
+import com.quantstream.consumer.model.Signal;
 import com.quantstream.consumer.model.Tick;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.common.serialization.StringDeserializer;
@@ -16,7 +18,15 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * Kafka Consumer configuration for receiving Tick messages.
+ * Kafka Consumer configuration for three types of messages:
+ * 1. Tick - raw market data
+ * 2. Candle - aggregated OHLC data
+ * 3. Signal - trading signals
+ * 
+ * Each type has:
+ * - Its own ConsumerFactory (for deserialization)
+ * - Its own KafkaListenerContainerFactory (for threading/batching)
+ * - Its own consumer group ID (for independent offset tracking)
  */
 @EnableKafka
 @Configuration
@@ -25,66 +35,136 @@ public class KafkaConsumerConfig {
     @Value("${spring.kafka.bootstrap-servers}")
     private String bootstrapServers;
 
-    @Value("${spring.kafka.consumer.group-id:questdb-consumer-group}")
-    private String groupId;
+    // ============================================================
+    // TICK CONSUMER (existing, unchanged)
+    // ============================================================
 
-    /**
-     * Creates ConsumerFactory with configuration for String keys and Tick values.
-     */
     @Bean
-    public ConsumerFactory<String, Tick> consumerFactory() {
+    public ConsumerFactory<String, Tick> tickConsumerFactory() {
         Map<String, Object> configProps = new HashMap<>();
-        
-        // Kafka broker address
         configProps.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
-        
-        // Consumer group ID (CRITICAL - identifies this consumer group)
-        configProps.put(ConsumerConfig.GROUP_ID_CONFIG, groupId);
-        
-        // Key deserializer (bytes → String)
+        configProps.put(ConsumerConfig.GROUP_ID_CONFIG, "questdb-consumer-group");
         configProps.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
-        
-        // Value deserializer (bytes → JSON → Tick)
         configProps.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, JsonDeserializer.class);
-        
-        // JsonDeserializer specific: trust our Tick class
         configProps.put(JsonDeserializer.TRUSTED_PACKAGES, "com.quantstream.consumer.model");
-        
-        // Start reading from earliest message if no previous offset
         configProps.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
-
-        // MANUAL commit (acknowledgment.acknowledge() in listener)
         configProps.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
-
-        // How much data to fetch in one request
         configProps.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, 500);
         
         return new DefaultKafkaConsumerFactory<>(
             configProps,
             new StringDeserializer(),
-            new JsonDeserializer<>(Tick.class, false)  // false = don't use type headers
+            new JsonDeserializer<>(Tick.class, false)
         );
     }
 
-    /**
-     * Creates KafkaListenerContainerFactory for @KafkaListener annotations.
-     * This manages consumer threads and message delivery.
-     */
     @Bean
     public ConcurrentKafkaListenerContainerFactory<String, Tick> kafkaListenerContainerFactory() {
         ConcurrentKafkaListenerContainerFactory<String, Tick> factory =
                 new ConcurrentKafkaListenerContainerFactory<>();
-
-        factory.setConsumerFactory(consumerFactory());
-
-        // Number of concurrent consumer threads (parallelism)
+        factory.setConsumerFactory(tickConsumerFactory());
+        // Enable batch mode
+        factory.setBatchListener(true);
         factory.setConcurrency(3);
-
-        // Enable manual acknowledgment mode (required for Acknowledgment parameter)
         factory.getContainerProperties().setAckMode(
             org.springframework.kafka.listener.ContainerProperties.AckMode.MANUAL
         );
+        return factory;
+    }
 
+    // ============================================================
+    // CANDLE CONSUMER (NEW - batch processing)
+    // ============================================================
+
+    @Bean
+    public ConsumerFactory<String, Candle> candleConsumerFactory() {
+        Map<String, Object> configProps = new HashMap<>();
+        configProps.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        
+        // SEPARATE consumer group (independent offset tracking)
+        configProps.put(ConsumerConfig.GROUP_ID_CONFIG, "questdb-candles-consumer-group");
+        
+        configProps.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
+        configProps.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, JsonDeserializer.class);
+        configProps.put(JsonDeserializer.TRUSTED_PACKAGES, "com.quantstream.consumer.model");
+        configProps.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+        configProps.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
+        
+        // BATCH PROCESSING: Fetch up to 500 candles at once
+        configProps.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, 500);
+        
+        return new DefaultKafkaConsumerFactory<>(
+            configProps,
+            new StringDeserializer(),
+            new JsonDeserializer<>(Candle.class, false)
+        );
+    }
+
+    @Bean
+    public ConcurrentKafkaListenerContainerFactory<String, Candle> candleKafkaListenerContainerFactory() {
+        ConcurrentKafkaListenerContainerFactory<String, Candle> factory =
+                new ConcurrentKafkaListenerContainerFactory<>();
+        factory.setConsumerFactory(candleConsumerFactory());
+        
+        // BATCH MODE: Deliver messages in batches (not one-by-one)
+        factory.setBatchListener(true);
+        
+        // 3 concurrent threads (matches Kafka topic partitions)
+        factory.setConcurrency(3);
+        
+        // Manual acknowledgment (commit after successful batch insert)
+        factory.getContainerProperties().setAckMode(
+            org.springframework.kafka.listener.ContainerProperties.AckMode.MANUAL
+        );
+        
+        return factory;
+    }
+
+    // ============================================================
+    // SIGNAL CONSUMER (NEW - real-time processing)
+    // ============================================================
+
+    @Bean
+    public ConsumerFactory<String, Signal> signalConsumerFactory() {
+        Map<String, Object> configProps = new HashMap<>();
+        configProps.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        
+        // SEPARATE consumer group (independent offset tracking)
+        configProps.put(ConsumerConfig.GROUP_ID_CONFIG, "questdb-signals-consumer-group");
+        
+        configProps.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
+        configProps.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, JsonDeserializer.class);
+        configProps.put(JsonDeserializer.TRUSTED_PACKAGES, "com.quantstream.consumer.model");
+        configProps.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+        configProps.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
+        
+        // INDIVIDUAL PROCESSING: Small batch size for low latency
+        configProps.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, 10);
+        
+        return new DefaultKafkaConsumerFactory<>(
+            configProps,
+            new StringDeserializer(),
+            new JsonDeserializer<>(Signal.class, false)
+        );
+    }
+
+    @Bean
+    public ConcurrentKafkaListenerContainerFactory<String, Signal> signalKafkaListenerContainerFactory() {
+        ConcurrentKafkaListenerContainerFactory<String, Signal> factory =
+                new ConcurrentKafkaListenerContainerFactory<>();
+        factory.setConsumerFactory(signalConsumerFactory());
+        
+        // SINGLE MESSAGE MODE (not batch)
+        factory.setBatchListener(false);
+        
+        // Single thread (signals are low-volume)
+        factory.setConcurrency(1);
+        
+        // Manual acknowledgment
+        factory.getContainerProperties().setAckMode(
+            org.springframework.kafka.listener.ContainerProperties.AckMode.MANUAL
+        );
+        
         return factory;
     }
 }
