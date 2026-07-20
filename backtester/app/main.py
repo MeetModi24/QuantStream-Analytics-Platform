@@ -1,6 +1,9 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+import asyncio
 from app.config import get_settings
+from app.api.backtest import router as backtest_router
+from app.core.task_manager import start_cleanup_task
 
 # Get configuration
 settings = get_settings()
@@ -23,6 +26,18 @@ app.add_middleware(
     allow_headers=["*"],  # Allow all headers
 )
 
+# Register API routers
+app.include_router(backtest_router)
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Run on application startup."""
+    # Start background task to clean up expired results
+    asyncio.create_task(start_cleanup_task(interval_minutes=30, ttl_hours=1))
+    print("✅ Backtesting Engine started")
+    print(f"📊 API Documentation: http://{settings.host}:{settings.port}/docs")
+
 
 @app.get("/")
 async def root():
@@ -30,7 +45,8 @@ async def root():
     return {
         "message": "QuantStream Backtesting Engine",
         "version": settings.app_version,
-        "status": "operational"
+        "status": "operational",
+        "docs_url": "/docs"
     }
 
 
