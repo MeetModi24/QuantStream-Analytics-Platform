@@ -579,6 +579,6 @@ Phase 3 is complete when:
 
 ## Reference
 
-- GitHub Reference: https://github.com/the-faiz/Back-testing-Engine
+- GitHub Reference: https://github.com/the-faiz/Back-testing-Engine, https://timkimutai.medium.com/how-i-built-an-event-driven-backtesting-engine-in-python-25179a80cde0 
 - Our focus: Simpler, tailored to our 10 strategies
 - Key difference: We fetch from QuestDB (not CSV files)

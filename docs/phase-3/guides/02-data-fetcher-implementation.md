@@ -182,13 +182,13 @@ class QuestDBFetcher:
             cursor = conn.cursor()
             
             # SQL query to fetch ticks
-            # Note: QuestDB timestamp format requires explicit casting
+            # Note: QuestDB handles timestamp comparisons natively (no casting needed)
             query = """
                 SELECT timestamp, price, volume
                 FROM ticks
                 WHERE symbol = %s
-                  AND timestamp >= %s::timestamp
-                  AND timestamp < %s::timestamp
+                  AND timestamp >= %s
+                  AND timestamp < %s
                 ORDER BY timestamp ASC
             """
             
@@ -355,15 +355,16 @@ query = """
     SELECT timestamp, price, volume
     FROM ticks
     WHERE symbol = %s
-      AND timestamp >= %s::timestamp
-      AND timestamp < %s::timestamp
+      AND timestamp >= %s
+      AND timestamp < %s
     ORDER BY timestamp ASC
 """
 ```
 
 - `%s` = parameterized query (prevents SQL injection)
-- `::timestamp` = QuestDB type casting
+- QuestDB handles timestamp comparisons natively (no casting needed like `::timestamp`)
 - `ORDER BY timestamp ASC` = chronological order (required for backtesting)
+- This matches the query format used by Strategy Engine (Phase 2)
 
 **3. Pandas DataFrame Creation**
 
