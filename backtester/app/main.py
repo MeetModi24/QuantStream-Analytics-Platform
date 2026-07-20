@@ -3,6 +3,10 @@ from fastapi.middleware.cors import CORSMiddleware
 import asyncio
 from app.config import get_settings
 from app.api.backtest import router as backtest_router
+from app.api.market import router as market_router
+from app.api.strategies import router as strategies_router
+from app.api.signals import router as signals_router
+from app.api.health import router as health_router
 from app.core.task_manager import start_cleanup_task
 
 # Get configuration
@@ -28,6 +32,10 @@ app.add_middleware(
 
 # Register API routers
 app.include_router(backtest_router)
+app.include_router(market_router)
+app.include_router(strategies_router)
+app.include_router(signals_router)
+app.include_router(health_router)
 
 
 @app.on_event("startup")
