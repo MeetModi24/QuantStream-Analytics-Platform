@@ -123,13 +123,13 @@ QuantStream is a **real-time trading strategy analytics platform** that combines
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 
-┌─────────────────────────────────────────────────────────────────┐
-│                    PHASE 3: BACKTESTING ENGINE                   │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
+┌────────────────────────────────────────────────────────────────┐
+│                    PHASE 3: BACKTESTING ENGINE                 │
+├────────────────────────────────────────────────────────────────┤
+│                                                                │
 │  ┌──────────────────────────────────────────────────────┐      │
-│  │         Strategy Backtester (Spring Boot)             │      │
-│  │                                                        │      │
+│  │         Strategy Backtester (Fast Api)               │      │
+│  │                                                      │      │
 │  │  For each strategy (10 total):                       │      │
 │  │  1. Query historical ticks from QuestDB              │      │
 │  │  2. Replay strategy logic day-by-day                 │      │
@@ -141,18 +141,18 @@ QuantStream is a **real-time trading strategy analytics platform** that combines
 │  │     - Win Rate (%)                                   │      │
 │  │     - Max Drawdown (%)                               │      │
 │  │     - Average Win/Loss                               │      │
-│  │                                                        │      │
+│  │                                                      │      │
 │  │  Output: Strategy performance rankings               │      │
 │  └──────────────────────────────────────────────────────┘      │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
+│                                                                │
+└────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────┐
 │                 PHASE 4: API GATEWAY & FRONTEND                  │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
 │  ┌──────────────────────────────────────────────────────┐      │
-│  │           API Gateway (Spring Boot)                   │      │
+│  │           API Gateway (Python)                   │      │
 │  │                                                        │      │
 │  │  REST API Endpoints:                                  │      │
 │  │  - GET /api/tokens                                    │      │
