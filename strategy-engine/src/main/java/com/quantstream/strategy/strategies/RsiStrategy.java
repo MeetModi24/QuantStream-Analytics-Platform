@@ -123,14 +123,15 @@ public class RsiStrategy implements TradingStrategy {
     }
 
     /**
-     * Query recent prices from QuestDB.
+     * Query recent daily closing prices from QuestDB.
+     * Uses candles_1d table for traditional technical analysis (MA(50) = 50 DAYS).
      */
     private List<Double> queryPrices(String symbol, int limit) {
-        String sql = "SELECT price FROM ticks WHERE symbol = ? ORDER BY timestamp DESC LIMIT ?";
+        String sql = "SELECT close FROM candles_1d WHERE symbol = ? ORDER BY date DESC LIMIT ?";
 
         return jdbcTemplate.query(
             sql,
-            (rs, rowNum) -> rs.getDouble("price"),
+            (rs, rowNum) -> rs.getDouble("close"),
             symbol,
             limit
         );

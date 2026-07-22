@@ -319,7 +319,7 @@ QuestDB has sufficient historical data:
 | AVAX | 37,932 ticks |
 | MATIC | 37,931 ticks |
 
-**Sufficient for all strategies** (longest requirement: MA(50) = 50 data points)
+**Note:** This was the old implementation using ticks. Current implementation uses candles_1d (MA(50) = 50 DAYS of daily candles)
 
 ---
 

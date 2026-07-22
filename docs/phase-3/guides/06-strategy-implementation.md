@@ -251,8 +251,8 @@ class RsiStrategy(BaseStrategy):
 **Original:** `MaCrossoverStrategy.java`
 
 **Parameters:**
-- MA10: 10 periods
-- MA50: 50 periods
+- MA10: 10 DAYS (10 daily candles)
+- MA50: 50 DAYS (50 daily candles)
 
 **Logic:**
 - **BUY:** Golden Cross (MA10 crosses above MA50)

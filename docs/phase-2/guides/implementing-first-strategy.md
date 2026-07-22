@@ -156,7 +156,7 @@ public class MaCrossoverStrategy implements TradingStrategy {
             
             // Step 2: Validate data
             if (prices.size() < 50) {
-                log.debug("Not enough data for {}: {} ticks (need 50)", symbol, prices.size());
+                log.debug("Not enough data for {}: {} candles (need 50)", symbol, prices.size());
                 return null;
             }
             
@@ -214,26 +214,29 @@ public class MaCrossoverStrategy implements TradingStrategy {
     }
     
     /**
-     * Query recent prices from QuestDB.
+     * Query recent candle closing prices from QuestDB.
+     * 
+     * IMPORTANT: Queries candles_1m table (NOT ticks)
+     * - Technical indicators require regular time intervals
+     * - 1-minute candles provide consistent periods
+     * - Ticks are irregular (whenever trades happen)
      * 
      * SQL:
+     * - SELECT close: Closing price of each 1-minute candle
+     * - FROM candles_1m: 1-minute OHLC candles table
      * - ORDER BY timestamp DESC: Most recent first
-     * - LIMIT 50: Only need 50 for MA(50)
-     * 
-     * Performance:
-     * - QuestDB optimized for time-series queries
-     * - Query takes ~5-10ms
+     * - LIMIT 50: Last 50 1-minute candles (50 minutes of data)
      * 
      * @param symbol Stock/crypto symbol
-     * @param limit Number of prices to fetch
-     * @return List of prices (most recent first)
+     * @param limit Number of candles to fetch
+     * @return List of closing prices (most recent first)
      */
     private List<Double> queryPrices(String symbol, int limit) {
-        String sql = "SELECT price FROM ticks WHERE symbol = ? ORDER BY timestamp DESC LIMIT ?";
+        String sql = "SELECT close FROM candles_1m WHERE symbol = ? ORDER BY timestamp DESC LIMIT ?";
         
         return jdbcTemplate.query(
             sql,
-            (rs, rowNum) -> rs.getDouble("price"),
+            (rs, rowNum) -> rs.getDouble("close"),
             symbol,
             limit
         );
@@ -707,12 +710,12 @@ Tests run: 5, Failures: 0, Errors: 0, Skipped: 0
 
 **Current:**
 ```java
-String sql = "SELECT price FROM ticks WHERE symbol = ? ORDER BY timestamp DESC LIMIT ?";
+String sql = "SELECT close FROM candles_1d WHERE symbol = ? ORDER BY date DESC LIMIT 50";
 ```
 
 **QuestDB optimization:**
-- Timestamp column is indexed by default
-- `ORDER BY timestamp DESC` uses index (fast)
+- Date column is indexed by default (designated timestamp)
+- `ORDER BY date DESC` uses index (fast)
 - `LIMIT 50` stops after 50 rows (efficient)
 
 **Query takes ~5-10ms** for 50 rows.

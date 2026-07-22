@@ -104,19 +104,19 @@ public class MaCrossoverStrategy implements TradingStrategy {
     
     @Override
     public int getRequiredHistoryDays() {
-        return 50;  // Need 50 days for MA(50)
+        return 50;  // Need 50 DAYS for MA(50)
     }
     
     @Override
     public Signal analyze(String symbol) {
-        // Query prices
+        // Query prices from daily candles
         List<Double> prices = queryPrices(symbol, 50);
         
         if (prices.size() < 50) {
             return null;  // Not enough data
         }
         
-        // Calculate indicators
+        // Calculate indicators using daily candles
         double ma10 = indicators.calculateMA(prices, 10);
         double ma50 = indicators.calculateMA(prices, 50);
         
@@ -144,9 +144,10 @@ public class MaCrossoverStrategy implements TradingStrategy {
     }
     
     private List<Double> queryPrices(String symbol, int limit) {
+        // Note: candles_1d table must be created and backfilled with 50+ days
         return jdbcTemplate.query(
-            "SELECT price FROM ticks WHERE symbol = ? ORDER BY timestamp DESC LIMIT ?",
-            (rs, rowNum) -> rs.getDouble("price"),
+            "SELECT close FROM candles_1d WHERE symbol = ? ORDER BY date DESC LIMIT ?",
+            (rs, rowNum) -> rs.getDouble("close"),
             symbol, limit
         );
     }
@@ -206,9 +207,10 @@ public class RsiStrategy implements TradingStrategy {
     }
     
     private List<Double> queryPrices(String symbol, int limit) {
+        // Note: candles_1d table must be created and backfilled with 50+ days
         return jdbcTemplate.query(
-            "SELECT price FROM ticks WHERE symbol = ? ORDER BY timestamp DESC LIMIT ?",
-            (rs, rowNum) -> rs.getDouble("price"),
+            "SELECT close FROM candles_1d WHERE symbol = ? ORDER BY date DESC LIMIT ?",
+            (rs, rowNum) -> rs.getDouble("close"),
             symbol, limit
         );
     }

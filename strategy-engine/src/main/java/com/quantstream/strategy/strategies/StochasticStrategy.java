@@ -69,7 +69,7 @@ public class StochasticStrategy implements TradingStrategy {
 
             // Step 2: Validate data
             if (prices.size() < STOCH_PERIOD) {
-                log.debug("Not enough data for {}: {} ticks (need {})",
+                log.debug("Not enough data for {}: {} daily candles (need {})",
                     symbol, prices.size(), STOCH_PERIOD);
                 return null;
             }
@@ -150,14 +150,14 @@ public class StochasticStrategy implements TradingStrategy {
     }
 
     /**
-     * Query recent prices from QuestDB.
+     * Query recent prices from daily candles.
      */
     private List<Double> queryPrices(String symbol, int limit) {
-        String sql = "SELECT price FROM ticks WHERE symbol = ? ORDER BY timestamp DESC LIMIT ?";
+        String sql = "SELECT close FROM candles_1d WHERE symbol = ? ORDER BY date DESC LIMIT ?";
 
         return jdbcTemplate.query(
             sql,
-            (rs, rowNum) -> rs.getDouble("price"),
+            (rs, rowNum) -> rs.getDouble("close"),
             symbol,
             limit
         );

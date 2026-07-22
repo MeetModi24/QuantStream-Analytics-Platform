@@ -347,10 +347,10 @@ public class MaCrossoverStrategy implements TradingStrategy {
     
     @Override
     public Signal analyze(String symbol) {
-        // Query last 50 prices
+        // Query last 50 daily candles (50 DAYS of data)
         List<Double> prices = jdbcTemplate.query(
-            "SELECT price FROM ticks WHERE symbol = ? ORDER BY timestamp DESC LIMIT 50",
-            (rs, rowNum) -> rs.getDouble("price"),
+            "SELECT close FROM candles_1d WHERE symbol = ? ORDER BY date DESC LIMIT 50",
+            (rs, rowNum) -> rs.getDouble("close"),
             symbol
         );
         
@@ -479,14 +479,14 @@ CREATE TABLE IF NOT EXISTS signals (
 
 ```
 Step 1: Strategy Service starts (every minute)
-Step 2: Query QuestDB
-        SELECT price FROM ticks 
+Step 2: Query QuestDB for daily candles
+        SELECT close FROM candles_1d 
         WHERE symbol = 'AAPL' 
-        ORDER BY timestamp DESC LIMIT 50
+        ORDER BY date DESC LIMIT 50
 
 Step 3: Calculate Indicators
-        ma10 = average(last 10 prices)
-        ma50 = average(last 50 prices)
+        ma10 = average(last 10 daily closes)
+        ma50 = average(last 50 daily closes)
 
 Step 4: Apply Logic
         if (ma10 > ma50 && prev_ma10 <= prev_ma50):

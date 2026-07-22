@@ -135,12 +135,13 @@ public class VwapStrategy implements TradingStrategy {
     }
 
     /**
-     * Query recent ticks with volume from QuestDB.
+     * Query recent daily candles with volume from QuestDB.
+     * Uses candles_1d for traditional technical analysis (VWAP over N days).
      */
     private List<Tick> queryTicks(String symbol, int limit) {
-        String sql = "SELECT symbol, price, volume, timestamp " +
-                    "FROM ticks WHERE symbol = ? " +
-                    "ORDER BY timestamp DESC LIMIT ?";
+        String sql = "SELECT symbol, close as price, volume, date as timestamp " +
+                    "FROM candles_1d WHERE symbol = ? " +
+                    "ORDER BY date DESC LIMIT ?";
 
         return jdbcTemplate.query(
             sql,

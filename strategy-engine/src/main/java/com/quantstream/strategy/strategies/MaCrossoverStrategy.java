@@ -74,7 +74,7 @@ public class MaCrossoverStrategy implements TradingStrategy {
             
             // Step 2: Validate data
             if (prices.size() < 50) {
-                log.debug("Not enough data for {}: {} ticks (need 50)", symbol, prices.size());
+                log.debug("Not enough data for {}: {} daily candles (need 50)", symbol, prices.size());
                 return null;
             }
             
@@ -133,25 +133,25 @@ public class MaCrossoverStrategy implements TradingStrategy {
     
     /**
      * Query recent prices from QuestDB.
-     * 
+     *
      * SQL:
-     * - ORDER BY timestamp DESC: Most recent first
+     * - ORDER BY date DESC: Most recent first
      * - LIMIT 50: Only need 50 for MA(50)
-     * 
+     *
      * Performance:
      * - QuestDB optimized for time-series queries
      * - Query takes ~5-10ms
-     * 
+     *
      * @param symbol Stock/crypto symbol
-     * @param limit Number of prices to fetch
+     * @param limit Number of daily candles to fetch
      * @return List of prices (most recent first)
      */
     private List<Double> queryPrices(String symbol, int limit) {
-        String sql = "SELECT price FROM ticks WHERE symbol = ? ORDER BY timestamp DESC LIMIT ?";
-        
+        String sql = "SELECT close FROM candles_1d WHERE symbol = ? ORDER BY date DESC LIMIT ?";
+
         return jdbcTemplate.query(
             sql,
-            (rs, rowNum) -> rs.getDouble("price"),
+            (rs, rowNum) -> rs.getDouble("close"),
             symbol,
             limit
         );

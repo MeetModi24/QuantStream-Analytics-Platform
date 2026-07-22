@@ -75,7 +75,7 @@ Generator → Kafka → Strategy Engine (listening to live ticks)
 **Issue:** 
 - Strategy needs 50 days of history
 - Live stream only provides current tick
-- Can't calculate MA(50) without 50 data points
+- Can't calculate MA(50) without 50 DAYS
 
 ### ✅ Must Query Database
 
@@ -83,12 +83,14 @@ Generator → Kafka → Strategy Engine (listening to live ticks)
 Generator → Kafka → QuestDB (storage)
                          ↓
               Strategy Engine (queries DB)
-              "SELECT price FROM ticks 
+              "SELECT close FROM candles_1d 
                WHERE symbol = 'AAPL' 
-               ORDER BY timestamp DESC LIMIT 50"
+               ORDER BY date DESC LIMIT 50"
                          ↓
-              Now has 50 days to calculate MA(50)
+              Now has 50 DAYS to calculate MA(50)
 ```
+
+**Note:** candles_1d table must be created and backfilled with 50+ days
 
 ---
 
@@ -366,14 +368,16 @@ if (ma10 > ma50 && previousMA10 <= previousMA50) {
 
 ```sql
 -- Query QuestDB
-SELECT price FROM ticks 
+SELECT close FROM candles_1d 
 WHERE symbol = 'AAPL' 
-ORDER BY timestamp DESC 
+ORDER BY date DESC 
 LIMIT 50;
 
 Result:
 [180.5, 181.2, 179.8, 182.1, 180.9, ...]
 ```
+
+**Note:** candles_1d table must be created and backfilled with 50+ days
 
 ### Indicator Calculation
 
@@ -394,7 +398,7 @@ double ma50 = average(prices[0...49]); // 178.3
 double ma10 = 180.7;
 double ma50 = 178.3;
 
-// Previous state (from 1 minute ago)
+// Previous state (from previous day's daily candles)
 double prevMA10 = 178.1;
 double prevMA50 = 178.5;
 

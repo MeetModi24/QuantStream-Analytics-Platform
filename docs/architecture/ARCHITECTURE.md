@@ -81,14 +81,20 @@ QuantStream is a **real-time trading strategy analytics platform** that combines
 │  │   └──────────────┘  └──────────────┘               │       │
 │  │                                                      │       │
 │  │   Scheduler runs every 60 seconds:                  │       │
-│  │   1. Query QuestDB for last N ticks per symbol     │       │
+│  │   1. Query QuestDB for last N daily candles        │       │
+│  │      (candles_1d table - NOT candles_1m)           │       │
+│  │      Example: MA(50) = 50 DAYS of daily data       │       │
 │  │   2. Calculate indicators (MA, RSI, MACD, etc.)    │       │
 │  │   3. Detect patterns (crossovers, thresholds)      │       │
 │  │   4. Generate BUY/SELL signals                      │       │
 │  │   5. Produce to Kafka "trading-signals"            │       │
 │  │                                                      │       │
-│  │   Input: QuestDB "ticks" table (historical data)   │       │
+│  │   Input: QuestDB "candles_1d" table (daily OHLC)  │       │
 │  │   Output: Kafka "trading-signals" topic            │       │
+│  │                                                      │       │
+│  │   Note: candles_1d table does not exist yet.       │       │
+│  │   Must aggregate candles_1m → candles_1d daily     │       │
+│  │   Must backfill 50+ days of synthetic data         │       │
 │  └───────────────────────┬──────────────────────────────┘       │
 │                          ↓                                       │
 │                 Kafka Topic: "trading-signals"                  │
@@ -111,12 +117,22 @@ QuantStream is a **real-time trading strategy analytics platform** that combines
 │  │  1. ticks (raw price data)                            │       │
 │  │     - symbol, price, volume, timestamp                │       │
 │  │     - ~10 rows/sec, 864K rows/day                     │       │
+│  │     - Used by aggregator for candles_1m               │       │
 │  │                                                         │       │
 │  │  2. candles_1m (1-minute OHLC)                        │       │
 │  │     - symbol, open, high, low, close, volume, ts      │       │
 │  │     - ~10 rows/min, 14.4K rows/day                    │       │
+│  │     - Used for frontend charts (real-time display)    │       │
+│  │     - NOT used for strategies (wrong timeframe)       │       │
 │  │                                                         │       │
-│  │  3. signals (trading signals)                         │       │
+│  │  3. candles_1d (daily OHLC) [PLANNED]                │       │
+│  │     - symbol, open, high, low, close, volume, date    │       │
+│  │     - ~10 rows/day (one per symbol)                   │       │
+│  │     - Used for strategies (MA(50) = 50 DAYS)          │       │
+│  │     - Must aggregate from candles_1m daily            │       │
+│  │     - Requires 50+ days backfill for MA(50)           │       │
+│  │                                                         │       │
+│  │  4. signals (trading signals)                         │       │
 │  │     - symbol, action, strategy, confidence, ts        │       │
 │  │     - ~20-50 rows/hour (depends on market conditions) │       │
 │  └───────────────────────────────────────────────────────┘       │
@@ -131,8 +147,10 @@ QuantStream is a **real-time trading strategy analytics platform** that combines
 │  │         Strategy Backtester (Fast Api)               │      │
 │  │                                                      │      │
 │  │  For each strategy (10 total):                       │      │
-│  │  1. Query historical ticks from QuestDB              │      │
+│  │  1. Query historical daily candles from QuestDB      │      │
+│  │     (candles_1d table - 50+ days)                    │      │
 │  │  2. Replay strategy logic day-by-day                 │      │
+│  │     (use same indicator calculations as live)        │      │
 │  │  3. Simulate trades at signal prices                 │      │
 │  │  4. Track portfolio value over time                  │      │
 │  │  5. Calculate performance metrics:                   │      │
@@ -143,6 +161,8 @@ QuantStream is a **real-time trading strategy analytics platform** that combines
 │  │     - Average Win/Loss                               │      │
 │  │                                                      │      │
 │  │  Output: Strategy performance rankings               │      │
+│  │                                                      │      │
+│  │  Note: Requires candles_1d table to exist first.     │      │
 │  └──────────────────────────────────────────────────────┘      │
 │                                                                │
 └────────────────────────────────────────────────────────────────┘
@@ -384,7 +404,8 @@ QuantStream is a **real-time trading strategy analytics platform** that combines
 ║  │   • Confidence = (RSI - 70) / 30                       │   ║
 ║  │   • Example: RSI = 75 → Confidence = 16.7%            │   ║
 ║  │                                                         │   ║
-║  │  Historical Data Required: 14 days                     │   ║
+║  │  Historical Data Required: 14 periods (1-min candles)  │   ║
+║  │  Timeframe: 14 minutes of OHLC data                    │   ║
 ║  └────────────────────────────────────────────────────────┘   ║
 ║                                                                 ║
 ╚════════════════════════════════════════════════════════════════╝
@@ -441,20 +462,25 @@ QuantStream is a **real-time trading strategy analytics platform** that combines
 10. VWAP Deviation (volume-based)
 
 **Execution:** Scheduler runs every 60 seconds  
-**Input:** QuestDB `ticks` table (historical queries)  
+**Input:** QuestDB `candles_1d` table (daily OHLC candles)  
 **Output:** Kafka topic `trading-signals`  
+**Note:**  
+- Strategies query **daily candles** (candles_1d), NOT 1-minute candles (candles_1m)  
+- MA(50) means 50 DAYS of daily closing prices (traditional finance definition)  
+- candles_1d table does NOT exist yet - requires aggregation and backfill  
 **Deployment:** Render free tier (512 MB)
 
 ### 5. Backtester (Phase 3)
 **Technology:** Java 21 + Spring Boot  
 **Purpose:** Evaluate strategy performance on historical data  
 **Process:**
-- Query historical ticks from QuestDB
-- Replay each strategy day-by-day
+- Query historical daily candles from QuestDB (candles_1d table)
+- Replay each strategy day-by-day (50+ days required for MA(50))
 - Simulate trades at signal prices
 - Calculate Sharpe ratio, win rate, PnL, drawdown
 
 **Output:** Performance metrics stored in QuestDB  
+**Note:** Requires candles_1d table with 50+ days of backfilled data  
 **Deployment:** Render free tier (512 MB)
 
 ### 6. API Gateway (Phase 4)
@@ -517,7 +543,10 @@ currentCandle.setClose(50000.00);
 
 **3c. Strategy Engine (t=60000ms - every minute)**
 ```java
-List<Double> prices = jdbcTemplate.query("SELECT price FROM ticks WHERE symbol='BTC' LIMIT 14");
+// Query 1-minute candles (regular intervals) instead of ticks (irregular)
+List<Double> prices = jdbcTemplate.query(
+    "SELECT close FROM candles_1m WHERE symbol='BTC' ORDER BY window_start DESC LIMIT 14"
+);
 double rsi = calculateRSI(prices);
 if (rsi < 30) {
     Signal signal = new Signal("BTC", "BUY", "RSI", 0.85, Instant.now());
@@ -666,6 +695,63 @@ Vercel (Frontend) → api-gateway.onrender.com (Backend)
 
 ## Key Design Decisions
 
+### Why Strategies Query Daily Candles (Not Ticks or 1-Minute Candles)?
+
+**CRITICAL:** All trading strategies query `candles_1d` table (daily candles), NOT `ticks` or `candles_1m`.
+
+**Why daily candles are mandatory:**
+- **Traditional finance definition:** MA(50) = 50 DAYS, NOT 50 minutes
+  - MA(50) = moving average over 50 daily closing prices (~2.5 months)
+  - RSI(14) = relative strength over 14 daily closing prices (~2 weeks)
+  - Using 1-minute candles would give 50 MINUTES, not 50 DAYS
+- **Technical indicators require regular time intervals**
+  - Ticks are IRREGULAR (arrive whenever trades happen)
+  - Daily candles are REGULAR (one candle per day per symbol)
+
+**What goes wrong with ticks:**
+```java
+// WRONG - queries last 50 ticks
+SELECT price FROM ticks WHERE symbol = 'AAPL' ORDER BY timestamp DESC LIMIT 50
+
+// Problem: 50 ticks could be:
+// - 50 seconds of data (if 1 tick/second)
+// - 5 minutes of data (if market is slow)
+// - 5 seconds of data (if market is volatile)
+// Result: MA(50) is meaningless (different time windows every time)
+```
+
+**What goes wrong with 1-minute candles:**
+```java
+// WRONG - queries last 50 1-minute candles
+SELECT close FROM candles_1m WHERE symbol = 'AAPL' ORDER BY timestamp DESC LIMIT 50
+
+// Problem: 50 candles = 50 MINUTES (not 50 days!)
+// Result: MA(50) = 50 minutes of data, NOT the traditional 50 days
+// This is NOT acceptable for traditional technical analysis
+```
+
+**Correct approach:**
+```java
+// CORRECT - queries last 50 daily candles
+SELECT close FROM candles_1d WHERE symbol = 'AAPL' ORDER BY date DESC LIMIT 50
+
+// Result: 50 candles = always 50 DAYS
+// MA(50) = moving average over 50 days (traditional finance meaning)
+```
+
+**Required implementation:**
+- All 10 strategies MUST query candles_1d table (daily candles)
+- MA(50) = 50 DAYS of daily closing prices (traditional definition)
+- RSI(14) = 14 DAYS of daily closing prices
+- candles_1d table does NOT exist yet (needs to be created)
+- Must aggregate candles_1m → candles_1d once per day
+- Must backfill 50+ days of synthetic historical data
+
+**Data retention:**
+- `ticks` table: Keep 7 days (used only by aggregator, then deleted)
+- `candles_1m` table: Keep forever (used by frontend charts, NOT strategies)
+- `candles_1d` table: Keep forever (used by strategies for traditional TA)
+
 ### Why Kafka?
 - Decouples services (each independent)
 - Handles high throughput (1M+ msg/sec capability)
@@ -737,11 +823,70 @@ Vercel (Frontend) → api-gateway.onrender.com (Backend)
 
 ---
 
+## Phase 2 Status & Required Fixes
+
+### ✅ What's Built and Working
+1. **Aggregator service** - Creates 1-minute OHLC candles from ticks ✅
+2. **Database consumer** - Writes to all 3 tables (ticks, candles_1m, signals) ✅
+3. **Strategy scheduler** - Runs 10 strategies every 60 seconds ✅
+4. **10 strategy implementations** - All indicator calculations correct ✅
+5. **QuestDB integration** - All tables created and populated ✅
+
+### ❌ What Needs Fixing
+
+**Problem 1:** candles_1d table does NOT exist
+- Must create table schema in QuestDB
+- Must implement daily aggregation (candles_1m → candles_1d)
+- Must backfill 50+ days of synthetic historical data
+
+**Problem 2:** All 10 strategies query WRONG table (ticks instead of candles_1d)
+
+**Files to fix:**
+1. `/strategy-engine/src/main/java/com/quantstream/strategy/strategies/RsiStrategy.java:129`
+2. `/strategy-engine/src/main/java/com/quantstream/strategy/strategies/MacdStrategy.java:151`
+3. `/strategy-engine/src/main/java/com/quantstream/strategy/strategies/MaCrossoverStrategy.java:150`
+4. `/strategy-engine/src/main/java/com/quantstream/strategy/strategies/BollingerBandsStrategy.java:139`
+5. `/strategy-engine/src/main/java/com/quantstream/strategy/strategies/StochasticStrategy.java:156`
+6. `/strategy-engine/src/main/java/com/quantstream/strategy/strategies/WilliamsRStrategy.java:129`
+7. `/strategy-engine/src/main/java/com/quantstream/strategy/strategies/AdxStrategy.java:145`
+8. `/strategy-engine/src/main/java/com/quantstream/strategy/strategies/DonchianChannelStrategy.java:144`
+9. `/strategy-engine/src/main/java/com/quantstream/strategy/strategies/RocStrategy.java:130`
+10. `/strategy-engine/src/main/java/com/quantstream/strategy/strategies/VwapStrategy.java:142`
+
+**Change required (each file):**
+```java
+// BEFORE (WRONG - uses ticks, gives ~50 seconds of data)
+SELECT price FROM ticks WHERE symbol = ? ORDER BY timestamp DESC LIMIT 50
+
+// INTERMEDIATE (STILL WRONG - uses 1-minute candles, gives 50 MINUTES)
+SELECT close FROM candles_1m WHERE symbol = ? ORDER BY timestamp DESC LIMIT 50
+
+// AFTER (CORRECT - uses daily candles, gives 50 DAYS)
+SELECT close FROM candles_1d WHERE symbol = ? ORDER BY date DESC LIMIT 50
+```
+
+**Implementation order:**
+1. Fix documentation (ARCHITECTURE.md, Phase 2 guides) ← **CURRENT STEP**
+2. Create candles_1d table schema
+3. Implement daily aggregation job (scheduled or batch)
+4. Create backfill script for 50+ days of synthetic data
+5. Fix all 10 strategy queries to use candles_1d
+6. Test end-to-end with 50 days of data
+
+**Estimated fix time:** 3-4 hours total
+
+### 📋 Implementation Plan
+1. Create `BaseStrategy.java` with shared query logic using `candles_1m`
+2. Update all 10 strategies to extend `BaseStrategy`
+3. Remove duplicate `queryPrices()` methods from strategies
+4. Update comments: "50 days" → "50 1-minute candles (50 minutes)"
+5. Test: Run strategy-engine and verify signals generated correctly
+
 ## Next Steps
 
 1. ✅ **Phase 1 Complete:** Data pipeline (generator → Kafka → consumer → QuestDB)
-2. 🚧 **Phase 2 In Progress:** Build aggregator + strategy engine + extend consumer
-3. ⏳ **Phase 3:** Build backtester
+2. 🔧 **Phase 2 Needs Fix:** Strategies query wrong table (ticks instead of candles_1m)
+3. ⏳ **Phase 3:** Build backtester (depends on Phase 2 fix)
 4. ⏳ **Phase 4:** Build API gateway + React frontend
 5. ⏳ **Phase 5:** Deploy to free tier (Render + Vercel + Upstash)
 
