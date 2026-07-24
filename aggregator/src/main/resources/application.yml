@@ -5,7 +5,7 @@ spring:
   kafka:
     bootstrap-servers: localhost:9092
     streams:
-      application-id: aggregator-service
+      application-id: aggregator-service-v2
       # State store directory
       state-dir: /tmp/kafka-streams
       # Processing guarantee (exactly-once semantics)
@@ -16,6 +16,8 @@ spring:
         commit.interval.ms: 1000
         # Windowing grace period (late events)
         window.grace.ms: 5000
+        # Start from beginning when no offset exists
+        auto.offset.reset: earliest
 
 server:
   port: 8084

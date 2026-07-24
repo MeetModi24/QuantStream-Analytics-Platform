@@ -16,6 +16,16 @@ import java.util.List;
 
 /**
  * Kafka consumer that receives tick data and persists to QuestDB.
+ *
+ * ⚠️ DISABLED: Not needed for production pipeline.
+ *
+ * Reason: Strategies query candles_1d (daily candles), not raw ticks.
+ * The aggregator creates candles directly from Kafka "market-data" topic,
+ * so persisting 51M ticks to QuestDB is wasteful (52M writes avoided).
+ *
+ * Flow: Kafka market-data → Aggregator → candles_1m → candles_1d → Strategies
+ *
+ * To re-enable: Uncomment @Service annotation below.
  * <p>
  * Design Philosophy:
  * - Annotation-based consumption (@KafkaListener)
@@ -30,7 +40,7 @@ import java.util.List;
  * - Commits offset after each successful insert
  * - Can handle 1000+ messages/second with connection pooling
  */
-@Service
+// @Service  // DISABLED: Ticks table not used by strategies
 public class TickConsumer {
 
     private static final Logger log = LoggerFactory.getLogger(TickConsumer.class);

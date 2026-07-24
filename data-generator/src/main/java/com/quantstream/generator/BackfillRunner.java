@@ -1,7 +1,7 @@
 package com.quantstream.generator;
 
 import com.quantstream.generator.model.TokenConfig;
-import com.quantstream.generator.model.Tick;
+import com.quantstream.generator.model.Candle;
 import com.quantstream.generator.service.PriceSimulator;
 import com.quantstream.generator.service.TokenRegistryService;
 import lombok.RequiredArgsConstructor;
@@ -17,9 +17,9 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * Backfill Runner - Generates historical data fast.
+ * Backfill Runner - Generates historical candle data (1-minute OHLC).
  *
- * Run with: mvn spring-boot:run -Dspring-boot.run.arguments="--backfill.enabled=true --backfill.days=30"
+ * Run with: mvn spring-boot:run -Dspring-boot.run.arguments="--backfill.enabled=true --backfill.days=60"
  */
 @Slf4j
 @Component
@@ -27,16 +27,16 @@ import java.util.Map;
 public class BackfillRunner implements CommandLineRunner {
 
     private final TokenRegistryService tokenRegistryService;
-    private final KafkaTemplate<String, Tick> kafkaTemplate;
+    private final KafkaTemplate<String, Candle> kafkaTemplate;
 
     @Value("${backfill.enabled:false}")
     private boolean backfillEnabled;
 
-    @Value("${backfill.days:30}")
+    @Value("${backfill.days:60}")
     private int days;
 
-    @Value("${backfill.ticks-per-hour:60}")
-    private int ticksPerHour;
+    @Value("${backfill.ticks-per-candle:60}")
+    private int ticksPerCandle;
 
     @Override
     public void run(String... args) throws Exception {
@@ -46,15 +46,15 @@ public class BackfillRunner implements CommandLineRunner {
         }
 
         log.info("========================================");
-        log.info("BACKFILL MODE ENABLED");
+        log.info("BACKFILL MODE ENABLED - GENERATING CANDLES");
         log.info("========================================");
 
         log.info("Backfill Configuration:");
         log.info("  Days: {}", days);
-        log.info("  Ticks per hour: {}", ticksPerHour);
+        log.info("  Ticks per candle: {} (for price variation simulation)", ticksPerCandle);
 
         // Run backfill
-        backfillHistoricalData(days, ticksPerHour);
+        backfillHistoricalCandles(days, ticksPerCandle);
 
         log.info("========================================");
         log.info("BACKFILL COMPLETE - Exiting");
@@ -64,7 +64,7 @@ public class BackfillRunner implements CommandLineRunner {
         System.exit(0);
     }
 
-    private void backfillHistoricalData(int days, int ticksPerHour) {
+    private void backfillHistoricalCandles(int days, int ticksPerCandle) {
         var activeTokens = tokenRegistryService.getActiveTokens();
 
         // Create simulators for each token
@@ -78,66 +78,83 @@ public class BackfillRunner implements CommandLineRunner {
             simulators.put(config.symbol(), simulator);
         }
 
-        // Calculate total ticks to generate
-        int hoursToGenerate = days * 24;
-        long totalTicks = (long) hoursToGenerate * ticksPerHour * activeTokens.size();
+        // Calculate total candles to generate: days × 24 hours × 60 minutes × symbols
+        int minutesToGenerate = days * 24 * 60;
+        long totalCandles = (long) minutesToGenerate * activeTokens.size();
 
-        log.info("Generating {} ticks ({} hours × {} ticks/hour × {} symbols)",
-                totalTicks, hoursToGenerate, ticksPerHour, activeTokens.size());
+        log.info("Generating {} candles ({} minutes × {} symbols = {})",
+                totalCandles, minutesToGenerate, activeTokens.size(),
+                totalCandles);
+        log.info("Expected: 60 days × 1440 min/day × 10 symbols = 864,000 candles");
 
-        // Start from 'days' ago
-        Instant currentTime = Instant.now().minus(days, ChronoUnit.DAYS);
-        long secondsBetweenTicks = 3600 / ticksPerHour; // seconds per tick
+        // Start from 'days' ago, aligned to minute boundary
+        Instant startTime = Instant.now().minus(days, ChronoUnit.DAYS).truncatedTo(ChronoUnit.MINUTES);
+        Instant currentMinute = startTime;
 
-        long ticksGenerated = 0;
+        long candlesGenerated = 0;
         long lastLogTime = System.currentTimeMillis();
 
-        // Generate historical data
-        for (int hour = 0; hour < hoursToGenerate; hour++) {
-            for (int tickIdx = 0; tickIdx < ticksPerHour; tickIdx++) {
-                // Generate tick for each symbol
-                for (TokenConfig config : activeTokens) {
-                    String symbol = config.symbol();
-                    PriceSimulator simulator = simulators.get(symbol);
+        // Generate candles minute by minute
+        for (int minute = 0; minute < minutesToGenerate; minute++) {
+            // Generate one candle per symbol for this minute
+            for (TokenConfig config : activeTokens) {
+                String symbol = config.symbol();
+                PriceSimulator simulator = simulators.get(symbol);
 
-                    // Generate price and volume
+                // Simulate multiple ticks within the minute to get OHLC variation
+                double open = simulator.generateNextPrice();
+                double high = open;
+                double low = open;
+                double close = open;
+                double totalVolume = 0;
+
+                // Generate ticksPerCandle ticks and aggregate OHLC
+                for (int tickIdx = 0; tickIdx < ticksPerCandle; tickIdx++) {
                     double price = simulator.generateNextPrice();
                     double volume = simulator.generateVolume(config.baseVolume());
 
-                    // Create tick (order: symbol, price, volume, timestamp)
-                    Tick tick = new Tick(
-                        symbol,
-                        price,
-                        volume,
-                        currentTime
-                    );
-
-                    // Send to Kafka
-                    kafkaTemplate.send("market-data", symbol, tick);
-
-                    ticksGenerated++;
+                    high = Math.max(high, price);
+                    low = Math.min(low, price);
+                    close = price; // Last tick becomes close
+                    totalVolume += volume;
                 }
 
-                // Advance time
-                currentTime = currentTime.plusSeconds(secondsBetweenTicks);
+                // Create candle
+                Candle candle = new Candle(
+                    symbol,
+                    open,
+                    high,
+                    low,
+                    close,
+                    totalVolume,
+                    currentMinute
+                );
 
-                // Log progress every 10 seconds
-                long now = System.currentTimeMillis();
-                if (now - lastLogTime > 10000) {
-                    double progress = (double) ticksGenerated / totalTicks * 100;
-                    log.info("Progress: {}/{} ticks ({:.1f}%) - Current time: {}",
-                            ticksGenerated, totalTicks, progress, currentTime);
-                    lastLogTime = now;
-                }
+                // Send to Kafka candles-1m topic
+                kafkaTemplate.send("candles-1m", symbol, candle);
+
+                candlesGenerated++;
+            }
+
+            // Advance to next minute
+            currentMinute = currentMinute.plus(1, ChronoUnit.MINUTES);
+
+            // Log progress every 10 seconds
+            long now = System.currentTimeMillis();
+            if (now - lastLogTime > 10000) {
+                double progress = (double) candlesGenerated / totalCandles * 100;
+                log.info("Progress: {}/{} candles ({:.1f}%) - Current time: {}",
+                        candlesGenerated, totalCandles, progress, currentMinute);
+                lastLogTime = now;
             }
         }
 
         // Flush Kafka
         kafkaTemplate.flush();
 
-        log.info("✅ Generated {} ticks from {} to {}",
-                ticksGenerated,
-                currentTime.minus(days, ChronoUnit.DAYS),
-                currentTime);
+        log.info("✅ Generated {} candles from {} to {}",
+                candlesGenerated,
+                startTime,
+                currentMinute);
     }
 }
