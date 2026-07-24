@@ -111,6 +111,116 @@ async def latest_order_book(token: str = Query(...)):
     return rows[0] if rows else JSONResponse({"detail": "no data"}, status_code=404)
 
 
+# -------------------------------------------------------------------------- strategies
+@app.get("/api/strategies")
+async def strategies() -> list[str]:
+    """Distinct strategy names that have produced a PnL snapshot."""
+    rows = await questdb.query("SELECT DISTINCT strategy FROM strategy_pnl ORDER BY strategy")
+    return [r["strategy"] for r in rows]
+
+
+# ------------------------------------------------------------------------ strategy pnl
+@app.get("/api/strategy-pnl/latest")
+async def strategy_pnl_latest():
+    """Latest PnL snapshot per strategy — the leaderboard source.
+
+    ``LATEST ON ts PARTITION BY strategy`` gives QuestDB's efficient last-row-per-key.
+    """
+    return await questdb.query(
+        "SELECT strategy, realized_pnl, unrealized_pnl, total_pnl, num_trades, win_rate, ts "
+        "FROM strategy_pnl LATEST ON ts PARTITION BY strategy ORDER BY total_pnl DESC"
+    )
+
+
+@app.get("/api/strategy-pnl")
+async def strategy_pnl_series(
+    strategy: str | None = Query(None, description="Optional strategy filter"),
+    limit: int = Query(600, ge=1, le=10000),
+):
+    """PnL time series (oldest-first) for equity curves. Optionally one strategy."""
+    where = f"WHERE strategy = '{_esc(strategy)}'" if strategy else ""
+    rows = await questdb.query(
+        f"SELECT ts, strategy, realized_pnl, unrealized_pnl, total_pnl, num_trades, win_rate "
+        f"FROM strategy_pnl {where} ORDER BY ts DESC LIMIT {limit}"
+    )
+    rows.reverse()
+    return rows
+
+
+# --------------------------------------------------------------------------- positions
+@app.get("/api/positions")
+async def positions_latest(
+    strategy: str | None = Query(None),
+    token: str | None = Query(None),
+):
+    """Latest open position per (strategy, token) — current exposure snapshot."""
+    filters = []
+    if strategy:
+        filters.append(f"strategy = '{_esc(strategy)}'")
+    if token:
+        filters.append(f"token = '{_esc(token)}'")
+    where = f"WHERE {' AND '.join(filters)}" if filters else ""
+    return await questdb.query(
+        f"SELECT strategy, token, net_position, avg_entry_price, realized_pnl, unrealized_pnl, ts "
+        f"FROM positions {where} LATEST ON ts PARTITION BY strategy, token "
+        f"ORDER BY strategy, token"
+    )
+
+
+@app.get("/api/consensus")
+async def consensus():
+    """Per-token long/short breakdown across strategies, derived from latest positions.
+
+    A ``conflict`` is any token where at least one strategy is net-long while another is
+    net-short. Computed from the positions table — no new backend state.
+    """
+    rows = await questdb.query(
+        "SELECT strategy, token, net_position "
+        "FROM positions LATEST ON ts PARTITION BY strategy, token"
+    )
+    by_token: dict[str, dict[str, list[str]]] = {}
+    for r in rows:
+        net = r["net_position"] or 0.0
+        if net == 0.0:
+            continue
+        entry = by_token.setdefault(r["token"], {"longs": [], "shorts": []})
+        (entry["longs"] if net > 0 else entry["shorts"]).append(r["strategy"])
+    out = []
+    for token in sorted(by_token):
+        longs = sorted(by_token[token]["longs"])
+        shorts = sorted(by_token[token]["shorts"])
+        out.append({
+            "token": token,
+            "longs": longs,
+            "shorts": shorts,
+            "conflict": bool(longs and shorts),
+        })
+    return out
+
+
+# ----------------------------------------------------------------------------- candles
+@app.get("/api/candles")
+async def candles(
+    token: str = Query(...),
+    interval: str = Query("1m", pattern="^(1s|5s|15s|1m|5m|15m|1h)$"),
+    limit: int = Query(500, ge=1, le=5000),
+):
+    """Microprice OHLC candles via QuestDB ``SAMPLE BY``.
+
+    Prices are the microprice (volume-weighted fair value), aggregated into candles so
+    the front end can render a familiar price chart with signal overlays. Returns
+    oldest-first for direct charting.
+    """
+    rows = await questdb.query(
+        f"SELECT ts, first(microprice) AS open, max(microprice) AS high, "
+        f"min(microprice) AS low, last(microprice) AS close "
+        f"FROM features WHERE token = '{_esc(token)}' "
+        f"SAMPLE BY {interval} ORDER BY ts DESC LIMIT {limit}"
+    )
+    rows.reverse()
+    return rows
+
+
 # --------------------------------------------------------------------------- websocket
 @app.websocket("/ws/live")
 async def ws_live(websocket: WebSocket) -> None:
