@@ -1,0 +1,56 @@
+# QuantStream token universe (development).
+#
+# This file is the SINGLE SOURCE OF TRUTH for which tokens the system runs and
+# their microstructure parameters. Scaling from 1 -> 100 -> 30,000 tokens is a
+# change to THIS FILE ONLY; no service code changes.
+#
+# Per-token parameters:
+#   symbol       : ticker, unique key
+#   category     : tech | crypto | financials | energy | healthcare | consumer | industrial | utilities
+#   initialPrice : seed price for the simulation
+#   tickSize     : minimum price increment
+#   spread       : typical bid-ask spread (price units)
+#   baseVolume   : top-of-book volume scale
+#   volatility   : per-tick price volatility (fractional std of the GBM step)
+#
+# `enabled` toggles a token without deleting its definition — handy for scaling
+# tests (enable 1, then 10, then 100) against a stable config.
+
+tokens:
+  - symbol: AAPL
+    category: tech
+    initialPrice: 180.00
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 5000
+    volatility: 0.0008
+    enabled: true
+
+  # --- Additional dev tokens: defined but disabled until we scale up. ---
+  # Enabling these (enabled: true) is all that's needed to run 100 tokens.
+  - symbol: MSFT
+    category: tech
+    initialPrice: 420.00
+    tickSize: 0.01
+    spread: 0.02
+    baseVolume: 4000
+    volatility: 0.0009
+    enabled: false
+
+  - symbol: BTC
+    category: crypto
+    initialPrice: 62000.00
+    tickSize: 0.50
+    spread: 0.50
+    baseVolume: 12
+    volatility: 0.0020
+    enabled: false
+
+  - symbol: JPM
+    category: financials
+    initialPrice: 195.00
+    tickSize: 0.01
+    spread: 0.02
+    baseVolume: 3000
+    volatility: 0.0011
+    enabled: false

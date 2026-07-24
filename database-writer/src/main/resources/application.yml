@@ -1,0 +1,33 @@
+spring:
+  application:
+    name: database-writer
+  # QuestDB PostgreSQL wire protocol (port 8812). Used for BOTH schema DDL and row
+  # ingestion — QuestDB's native ILP client is incompatible with Java 17+ (it reaches
+  # into the package-private jdk.internal.math.FDBigInteger). HikariCP gives a pooled,
+  # thread-safe DataSource shared by all Kafka listener threads.
+  datasource:
+    url: jdbc:postgresql://localhost:8812/qdb
+    username: admin
+    password: quest
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      # QuestDB does not implement PG SSL negotiation; disable it on every connection.
+      data-source-properties:
+        sslmode: disable
+      maximum-pool-size: 8
+      pool-name: questdb-pool
+
+quantstream:
+  topic:
+    order-book: order-book-data
+    features: features
+    signals: signals
+  kafka:
+    group-id: database-writer
+
+server:
+  port: 8082
+
+logging:
+  level:
+    com.quantstream: INFO

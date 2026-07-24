@@ -1,0 +1,17 @@
+spring:
+  application:
+    name: feature-calculator
+
+quantstream:
+  topic:
+    order-book: order-book-data
+    features: features
+  kafka:
+    group-id: feature-calculator
+
+server:
+  port: 8083
+
+logging:
+  level:
+    com.quantstream: INFO

@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>QuantStream — Live Microstructure</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: ui-sans-serif, system-ui, sans-serif;
+           background: #0d1117; color: #e6edf3; }
+    header { padding: 12px 20px; border-bottom: 1px solid #21262d;
+             display: flex; align-items: center; gap: 16px; }
+    h1 { font-size: 16px; margin: 0; font-weight: 600; }
+    .status { font-size: 12px; padding: 2px 8px; border-radius: 10px; background: #21262d; }
+    .status.live { background: #196c2e; }
+    .status.down { background: #8b1a1a; }
+    select { background: #161b22; color: #e6edf3; border: 1px solid #30363d;
+             border-radius: 6px; padding: 4px 8px; }
+    main { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; padding: 16px; }
+    .card { background: #161b22; border: 1px solid #21262d; border-radius: 8px; padding: 12px; }
+    .card h2 { font-size: 13px; margin: 0 0 10px; color: #8b949e; font-weight: 600;
+               text-transform: uppercase; letter-spacing: .04em; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th, td { text-align: left; padding: 5px 6px; border-bottom: 1px solid #21262d; }
+    th { color: #8b949e; font-weight: 600; }
+    .buy { color: #3fb950; font-weight: 600; }
+    .sell { color: #f85149; font-weight: 600; }
+    .close { color: #d29922; font-weight: 600; }
+    .metrics { display: flex; gap: 20px; font-size: 12px; color: #8b949e; }
+    .metrics b { color: #e6edf3; font-variant-numeric: tabular-nums; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>QuantStream</h1>
+    <label>Token
+      <select id="token"></select>
+    </label>
+    <span id="status" class="status">connecting…</span>
+    <div class="metrics">
+      <span>OBI <b id="m-obi">–</b></span>
+      <span>Microprice <b id="m-micro">–</b></span>
+      <span>Spread(bps) <b id="m-spread">–</b></span>
+    </div>
+  </header>
+  <main>
+    <div class="card">
+      <h2>OBI &amp; Microprice (live)</h2>
+      <canvas id="chart" height="120"></canvas>
+    </div>
+    <div class="card">
+      <h2>Signals (live)</h2>
+      <table>
+        <thead><tr><th>Time</th><th>Strategy</th><th>Action</th><th>Price</th><th>Conf</th></tr></thead>
+        <tbody id="signals"></tbody>
+      </table>
+    </div>
+  </main>
+
+  <script>
+    const MAX_POINTS = 300;
+    const MAX_SIGNALS = 50;
+    let currentToken = null;
+    let ws = null;
+
+    const statusEl = document.getElementById("status");
+    const tokenSel = document.getElementById("token");
+
+    const chart = new Chart(document.getElementById("chart"), {
+      type: "line",
+      data: { labels: [], datasets: [
+        { label: "OBI", yAxisID: "yObi", data: [], borderColor: "#58a6ff",
+          borderWidth: 1.5, pointRadius: 0, tension: 0.2 },
+        { label: "Microprice", yAxisID: "yPrice", data: [], borderColor: "#d29922",
+          borderWidth: 1.5, pointRadius: 0, tension: 0.2 },
+      ]},
+      options: { animation: false, responsive: true, interaction: { mode: "index", intersect: false },
+        scales: {
+          x: { ticks: { color: "#8b949e", maxTicksLimit: 8 }, grid: { color: "#21262d" } },
+          yObi: { position: "left", min: -1, max: 1, ticks: { color: "#58a6ff" }, grid: { color: "#21262d" } },
+          yPrice: { position: "right", ticks: { color: "#d29922" }, grid: { drawOnChartArea: false } },
+        },
+        plugins: { legend: { labels: { color: "#8b949e", boxWidth: 12 } } } }
+    });
+
+    function setStatus(text, cls) { statusEl.textContent = text; statusEl.className = "status " + (cls || ""); }
+    function fmt(n, d = 4) { return (n === null || n === undefined) ? "–" : Number(n).toFixed(d); }
+    function hhmmss(ts) { return new Date(ts).toLocaleTimeString(); }
+
+    function pushFeature(f) {
+      chart.data.labels.push(hhmmss(f.ts || f.timestamp));
+      chart.data.datasets[0].data.push(f.obi);
+      chart.data.datasets[1].data.push(f.microprice);
+      if (chart.data.labels.length > MAX_POINTS) {
+        chart.data.labels.shift();
+        chart.data.datasets.forEach(ds => ds.data.shift());
+      }
+      chart.update("none");
+      document.getElementById("m-obi").textContent = fmt(f.obi, 4);
+      document.getElementById("m-micro").textContent = fmt(f.microprice, 4);
+      document.getElementById("m-spread").textContent = fmt(f.spread_bps ?? f.spreadBps, 3);
+    }
+
+    function pushSignal(s) {
+      const tbody = document.getElementById("signals");
+      const tr = document.createElement("tr");
+      const cls = (s.action || "").toLowerCase();
+      tr.innerHTML = `<td>${hhmmss(s.ts || s.timestamp)}</td><td>${s.strategy}</td>` +
+        `<td class="${cls}">${s.action}</td><td>${fmt(s.price, 2)}</td><td>${fmt(s.confidence, 3)}</td>`;
+      tbody.prepend(tr);
+      while (tbody.children.length > MAX_SIGNALS) tbody.removeChild(tbody.lastChild);
+    }
+
+    async function loadHistory(token) {
+      chart.data.labels = []; chart.data.datasets.forEach(ds => ds.data = []);
+      document.getElementById("signals").innerHTML = "";
+      const [feats, sigs] = await Promise.all([
+        fetch(`/api/features?token=${encodeURIComponent(token)}&limit=${MAX_POINTS}`).then(r => r.json()),
+        fetch(`/api/signals?token=${encodeURIComponent(token)}&limit=${MAX_SIGNALS}`).then(r => r.json()),
+      ]);
+      feats.forEach(pushFeature);
+      sigs.reverse().forEach(pushSignal);  // API is newest-first; replay oldest-first
+    }
+
+    function connectWs() {
+      const proto = location.protocol === "https:" ? "wss" : "ws";
+      ws = new WebSocket(`${proto}://${location.host}/ws/live`);
+      ws.onopen = () => setStatus("live", "live");
+      ws.onclose = () => { setStatus("disconnected — retrying", "down"); setTimeout(connectWs, 2000); };
+      ws.onerror = () => ws.close();
+      ws.onmessage = (ev) => {
+        const msg = JSON.parse(ev.data);
+        const d = msg.data;
+        if ((d.token || "") !== currentToken) return;  // client-side token filter
+        if (msg.kind === "feature") pushFeature(d);
+        else if (msg.kind === "signal") pushSignal(d);
+      };
+    }
+
+    tokenSel.addEventListener("change", () => { currentToken = tokenSel.value; loadHistory(currentToken); });
+
+    async function init() {
+      let tokens = [];
+      try { tokens = await fetch("/api/tokens").then(r => r.json()); } catch (e) {}
+      if (!tokens.length) tokens = ["AAPL"];
+      tokenSel.innerHTML = tokens.map(t => `<option>${t}</option>`).join("");
+      currentToken = tokens[0];
+      await loadHistory(currentToken);
+      connectWs();
+    }
+    init();
+  </script>
+</body>
+</html>

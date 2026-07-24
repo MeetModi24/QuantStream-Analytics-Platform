@@ -1,0 +1,22 @@
+spring:
+  application:
+    name: order-book-generator
+  kafka:
+    bootstrap-servers: localhost:9092
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: "1"
+
+quantstream:
+  topic:
+    order-book: order-book-data
+  generator:
+    interval-ms: 1000   # 1 message per second per token
+
+server:
+  port: 8081
+
+logging:
+  level:
+    com.quantstream: INFO

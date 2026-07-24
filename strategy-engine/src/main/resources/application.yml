@@ -1,0 +1,21 @@
+spring:
+  application:
+    name: strategy-engine
+
+quantstream:
+  topic:
+    features: features
+    signals: signals
+  kafka:
+    group-id: strategy-engine
+  strategy:
+    obi:
+      enabled: true
+      threshold: 0.5   # |OBI| >= 0.5 triggers a signal
+
+server:
+  port: 8084
+
+logging:
+  level:
+    com.quantstream: INFO

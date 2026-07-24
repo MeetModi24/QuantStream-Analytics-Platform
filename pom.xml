@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>4.0.7</version>
+        <relativePath/>
+    </parent>
+
+    <groupId>com.quantstream</groupId>
+    <artifactId>quantstream-parent</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+    <packaging>pom</packaging>
+    <name>QuantStream Parent</name>
+    <description>Quantitative trading dashboard platform - HFT order book microstructure monitoring</description>
+
+    <modules>
+        <module>common</module>
+        <module>order-book-generator</module>
+        <module>database-writer</module>
+        <module>feature-calculator</module>
+        <module>strategy-engine</module>
+        <!-- api-gateway is a separate Python/FastAPI service, not a Maven module -->
+    </modules>
+
+    <properties>
+        <java.version>26</java.version>
+        <maven.compiler.release>26</maven.compiler.release>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- Shared internal module -->
+            <dependency>
+                <groupId>com.quantstream</groupId>
+                <artifactId>common</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+</project>
