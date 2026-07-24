@@ -2,8 +2,10 @@ package com.quantstream.dbwriter.questdb;
 
 import com.quantstream.common.model.Features;
 import com.quantstream.common.model.OrderBookSnapshot;
+import com.quantstream.common.model.Position;
 import com.quantstream.common.model.PriceLevel;
 import com.quantstream.common.model.Signal;
+import com.quantstream.common.model.StrategyPnl;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
@@ -54,6 +56,18 @@ public class QuestDbWriter {
             VALUES (?, ?, ?, ?, ?, ?, ?)
             """;
 
+    private static final String INSERT_POSITION = """
+            INSERT INTO positions
+                (strategy, token, net_position, avg_entry_price, realized_pnl, unrealized_pnl, ts)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """;
+
+    private static final String INSERT_STRATEGY_PNL = """
+            INSERT INTO strategy_pnl
+                (strategy, realized_pnl, unrealized_pnl, total_pnl, num_trades, win_rate, ts)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """;
+
     private final JdbcTemplate jdbc;
 
     public QuestDbWriter(JdbcTemplate jdbc) {
@@ -97,6 +111,30 @@ public class QuestDbWriter {
                 s.price(),
                 s.confidence(),
                 s.reason() == null ? "" : s.reason(),
+                toMicros(s.timestamp()));
+    }
+
+    /** Writes one paper-trading position snapshot from the Signal Aggregator. */
+    public void writePosition(Position p) {
+        jdbc.update(INSERT_POSITION,
+                p.strategy(),
+                p.token(),
+                p.netPosition(),
+                p.avgEntryPrice(),
+                p.realizedPnl(),
+                p.unrealizedPnl(),
+                toMicros(p.timestamp()));
+    }
+
+    /** Writes one per-strategy performance snapshot from the Signal Aggregator. */
+    public void writeStrategyPnl(StrategyPnl s) {
+        jdbc.update(INSERT_STRATEGY_PNL,
+                s.strategy(),
+                s.realizedPnl(),
+                s.unrealizedPnl(),
+                s.totalPnl(),
+                s.numTrades(),
+                s.winRate(),
                 toMicros(s.timestamp()));
     }
 

@@ -35,7 +35,7 @@ tokens:
     spread: 0.02
     baseVolume: 4000
     volatility: 0.0009
-    enabled: false
+    enabled: true
 
   - symbol: BTC
     category: crypto
@@ -44,7 +44,7 @@ tokens:
     spread: 0.50
     baseVolume: 12
     volatility: 0.0020
-    enabled: false
+    enabled: true
 
   - symbol: JPM
     category: financials
@@ -53,4 +53,4 @@ tokens:
     spread: 0.02
     baseVolume: 3000
     volatility: 0.0011
-    enabled: false
+    enabled: true

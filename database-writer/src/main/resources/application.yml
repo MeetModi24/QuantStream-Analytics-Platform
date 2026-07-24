@@ -22,6 +22,8 @@ quantstream:
     order-book: order-book-data
     features: features
     signals: signals
+    positions: positions
+    strategy-pnl: strategy-pnl
   kafka:
     group-id: database-writer
 

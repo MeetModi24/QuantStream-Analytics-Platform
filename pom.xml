@@ -24,6 +24,7 @@
         <module>database-writer</module>
         <module>feature-calculator</module>
         <module>strategy-engine</module>
+        <module>signal-aggregator</module>
         <!-- api-gateway is a separate Python/FastAPI service, not a Maven module -->
     </modules>
 

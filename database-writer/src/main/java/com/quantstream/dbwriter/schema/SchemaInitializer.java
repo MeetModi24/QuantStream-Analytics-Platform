@@ -66,6 +66,35 @@ public class SchemaInitializer {
             DEDUP UPSERT KEYS(ts, token, strategy)
             """;
 
+    // Paper-trading position snapshots from the Signal Aggregator. A snapshot is unique
+    // per (ts, strategy, token) — a redelivered snapshot upserts rather than duplicating.
+    private static final String POSITIONS_DDL = """
+            CREATE TABLE IF NOT EXISTS positions (
+                strategy SYMBOL CAPACITY 256 CACHE,
+                token SYMBOL CAPACITY 65536 CACHE,
+                net_position DOUBLE,
+                avg_entry_price DOUBLE,
+                realized_pnl DOUBLE,
+                unrealized_pnl DOUBLE,
+                ts TIMESTAMP
+            ) TIMESTAMP(ts) PARTITION BY DAY WAL
+            DEDUP UPSERT KEYS(ts, strategy, token)
+            """;
+
+    // Per-strategy performance snapshots. Unique per (ts, strategy).
+    private static final String STRATEGY_PNL_DDL = """
+            CREATE TABLE IF NOT EXISTS strategy_pnl (
+                strategy SYMBOL CAPACITY 256 CACHE,
+                realized_pnl DOUBLE,
+                unrealized_pnl DOUBLE,
+                total_pnl DOUBLE,
+                num_trades LONG,
+                win_rate DOUBLE,
+                ts TIMESTAMP
+            ) TIMESTAMP(ts) PARTITION BY DAY WAL
+            DEDUP UPSERT KEYS(ts, strategy)
+            """;
+
     private final JdbcTemplate jdbc;
 
     public SchemaInitializer(JdbcTemplate jdbc) {
@@ -78,7 +107,9 @@ public class SchemaInitializer {
             jdbc.execute(ORDER_BOOK_DDL);
             jdbc.execute(FEATURES_DDL);
             jdbc.execute(SIGNALS_DDL);
-            log.info("QuestDB schema ready (order_book_snapshots, features, signals)");
+            jdbc.execute(POSITIONS_DDL);
+            jdbc.execute(STRATEGY_PNL_DDL);
+            log.info("QuestDB schema ready (order_book_snapshots, features, signals, positions, strategy_pnl)");
         } catch (Exception e) {
             throw new IllegalStateException("Failed to initialize QuestDB schema", e);
         }

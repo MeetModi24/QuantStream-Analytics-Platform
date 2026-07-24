@@ -12,6 +12,11 @@ quantstream:
     obi:
       enabled: true
       threshold: 0.5   # |OBI| >= 0.5 triggers a signal
+    ou:                # Ornstein-Uhlenbeck mean reversion (stateful)
+      enabled: true
+      window: 600      # rolling microprice lookback (~10 min at 1 obs/sec) = warmup
+      entry-z: 2.0     # |z| >= 2.0 opens a reversion position
+      exit-z: 0.5      # |z| <= 0.5 closes (must be < entry-z for hysteresis)
 
 server:
   port: 8084

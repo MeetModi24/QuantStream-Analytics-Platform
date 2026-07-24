@@ -1,0 +1,26 @@
+spring:
+  application:
+    name: signal-aggregator
+
+quantstream:
+  topic:
+    signals: signals
+    features: features
+    positions: positions
+    strategy-pnl: strategy-pnl
+  kafka:
+    group-id: signal-aggregator
+  aggregator:
+    # Notional (in quote currency) traded per simulated fill. Units are derived as
+    # notional / fill-price, so a $10k fill takes comparable dollar risk on a $58k BTC
+    # and a $196 JPM — making per-strategy PnL comparable across tokens. Config-driven.
+    notional-per-fill: 10000
+    # How often to snapshot the portfolio and emit positions + strategy-pnl.
+    publish-interval-ms: 1000
+
+server:
+  port: 8085
+
+logging:
+  level:
+    com.quantstream: INFO

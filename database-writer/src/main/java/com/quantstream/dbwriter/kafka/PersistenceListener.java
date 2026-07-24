@@ -3,7 +3,9 @@ package com.quantstream.dbwriter.kafka;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.quantstream.common.model.Features;
 import com.quantstream.common.model.OrderBookSnapshot;
+import com.quantstream.common.model.Position;
 import com.quantstream.common.model.Signal;
+import com.quantstream.common.model.StrategyPnl;
 import com.quantstream.dbwriter.questdb.QuestDbWriter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,6 +36,8 @@ public class PersistenceListener {
     private final AtomicLong orderBooksWritten = new AtomicLong();
     private final AtomicLong featuresWritten = new AtomicLong();
     private final AtomicLong signalsWritten = new AtomicLong();
+    private final AtomicLong positionsWritten = new AtomicLong();
+    private final AtomicLong strategyPnlWritten = new AtomicLong();
 
     public PersistenceListener(ObjectMapper objectMapper, QuestDbWriter writer) {
         this.objectMapper = objectMapper;
@@ -92,6 +96,44 @@ public class PersistenceListener {
         if (n % 10 == 0) {
             log.info("Persisted {} signals (latest {} {} {})",
                     n, signal.strategy(), signal.action(), signal.token());
+        }
+    }
+
+    @KafkaListener(
+            topics = "${quantstream.topic.positions:positions}",
+            containerFactory = "kafkaListenerContainerFactory")
+    public void onPosition(String payload) {
+        Position position;
+        try {
+            position = objectMapper.readValue(payload, Position.class);
+        } catch (Exception e) {
+            log.error("Skipping unparseable position message: {}", truncate(payload), e);
+            return;
+        }
+        writer.writePosition(position);
+        long n = positionsWritten.incrementAndGet();
+        if (n % 50 == 0) {
+            log.info("Persisted {} position snapshots (latest {} {})",
+                    n, position.strategy(), position.token());
+        }
+    }
+
+    @KafkaListener(
+            topics = "${quantstream.topic.strategy-pnl:strategy-pnl}",
+            containerFactory = "kafkaListenerContainerFactory")
+    public void onStrategyPnl(String payload) {
+        StrategyPnl pnl;
+        try {
+            pnl = objectMapper.readValue(payload, StrategyPnl.class);
+        } catch (Exception e) {
+            log.error("Skipping unparseable strategy-pnl message: {}", truncate(payload), e);
+            return;
+        }
+        writer.writeStrategyPnl(pnl);
+        long n = strategyPnlWritten.incrementAndGet();
+        if (n % 50 == 0) {
+            log.info("Persisted {} strategy-pnl snapshots (latest {} total={})",
+                    n, pnl.strategy(), pnl.totalPnl());
         }
     }
 
