@@ -27,6 +27,10 @@ info "Dashboard API"
 if lsof -ti "tcp:${DASHBOARD_PORT}" >/dev/null 2>&1; then ok "listening on ${DASHBOARD_PORT}"; else err "not running (port ${DASHBOARD_PORT})"; fi
 
 echo
+info "Frontend (Vite)"
+if lsof -ti "tcp:${FRONTEND_PORT}" >/dev/null 2>&1; then ok "listening on ${FRONTEND_PORT}"; else err "not running (port ${FRONTEND_PORT})"; fi
+
+echo
 info "QuestDB row counts (data flowing if these grow between runs)"
 if curl -s --get "${QUESTDB_HTTP}/exec" --data-urlencode "query=SELECT 1" 2>/dev/null | grep -q '"dataset"'; then
   for t in order_book_snapshots features signals positions strategy_pnl; do

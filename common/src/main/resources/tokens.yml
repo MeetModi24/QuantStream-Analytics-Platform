@@ -1,56 +1,917 @@
-# QuantStream token universe (development).
+# QuantStream token universe.
 #
-# This file is the SINGLE SOURCE OF TRUTH for which tokens the system runs and
-# their microstructure parameters. Scaling from 1 -> 100 -> 30,000 tokens is a
-# change to THIS FILE ONLY; no service code changes.
+# SINGLE SOURCE OF TRUTH for which tokens the system runs and their microstructure
+# parameters. Scaling is a change to THIS FILE ONLY; no service code changes.
 #
 # Per-token parameters:
 #   symbol       : ticker, unique key
 #   category     : tech | crypto | financials | energy | healthcare | consumer | industrial | utilities
-#   initialPrice : seed price for the simulation
+#   initialPrice : seed price for the simulation (real ~late-2025 reference levels)
 #   tickSize     : minimum price increment
 #   spread       : typical bid-ask spread (price units)
-#   baseVolume   : top-of-book volume scale
+#   baseVolume   : top-of-book volume scale (~ $1M notional / price)
 #   volatility   : per-tick price volatility (fractional std of the GBM step)
 #
-# `enabled` toggles a token without deleting its definition — handy for scaling
-# tests (enable 1, then 10, then 100) against a stable config.
+# `enabled` toggles a token without deleting its definition. All 100 are enabled;
+# flip any to false to run a smaller set for a scaling test.
 
 tokens:
   - symbol: AAPL
     category: tech
-    initialPrice: 180.00
+    initialPrice: 185
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 5405
+    volatility: 0.001
+    enabled: true
+
+  - symbol: MSFT
+    category: tech
+    initialPrice: 420
+    tickSize: 0.01
+    spread: 0.03
+    baseVolume: 2380
+    volatility: 0.001
+    enabled: true
+
+  - symbol: NVDA
+    category: tech
+    initialPrice: 135
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 7407
+    volatility: 0.0016
+    enabled: true
+
+  - symbol: AMD
+    category: tech
+    initialPrice: 165
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 6060
+    volatility: 0.0015
+    enabled: true
+
+  - symbol: INTC
+    category: tech
+    initialPrice: 24
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 8000
+    volatility: 0.0013
+    enabled: true
+
+  - symbol: CSCO
+    category: tech
+    initialPrice: 58
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 8000
+    volatility: 0.001
+    enabled: true
+
+  - symbol: ORCL
+    category: tech
+    initialPrice: 175
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 5714
+    volatility: 0.001
+    enabled: true
+
+  - symbol: ADBE
+    category: tech
+    initialPrice: 500
+    tickSize: 0.01
+    spread: 0.04
+    baseVolume: 2000
+    volatility: 0.001
+    enabled: true
+
+  - symbol: CRM
+    category: tech
+    initialPrice: 320
+    tickSize: 0.01
+    spread: 0.02
+    baseVolume: 3125
+    volatility: 0.001
+    enabled: true
+
+  - symbol: AVGO
+    category: tech
+    initialPrice: 175
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 5714
+    volatility: 0.0013
+    enabled: true
+
+  - symbol: QCOM
+    category: tech
+    initialPrice: 165
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 6060
+    volatility: 0.001
+    enabled: true
+
+  - symbol: TXN
+    category: tech
+    initialPrice: 200
     tickSize: 0.01
     spread: 0.01
     baseVolume: 5000
-    volatility: 0.0008
+    volatility: 0.001
     enabled: true
 
-  # --- Additional dev tokens: defined but disabled until we scale up. ---
-  # Enabling these (enabled: true) is all that's needed to run 100 tokens.
-  - symbol: MSFT
+  - symbol: AMAT
     category: tech
-    initialPrice: 420.00
+    initialPrice: 200
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 5000
+    volatility: 0.0013
+    enabled: true
+
+  - symbol: MU
+    category: tech
+    initialPrice: 105
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 8000
+    volatility: 0.0015
+    enabled: true
+
+  - symbol: NOW
+    category: tech
+    initialPrice: 950
+    tickSize: 0.01
+    spread: 0.07
+    baseVolume: 1052
+    volatility: 0.001
+    enabled: true
+
+  - symbol: INTU
+    category: tech
+    initialPrice: 640
+    tickSize: 0.01
+    spread: 0.04
+    baseVolume: 1562
+    volatility: 0.001
+    enabled: true
+
+  - symbol: IBM
+    category: tech
+    initialPrice: 230
+    tickSize: 0.01
+    spread: 0.02
+    baseVolume: 4347
+    volatility: 0.001
+    enabled: true
+
+  - symbol: SAP
+    category: tech
+    initialPrice: 240
+    tickSize: 0.01
+    spread: 0.02
+    baseVolume: 4166
+    volatility: 0.001
+    enabled: true
+
+  - symbol: PANW
+    category: tech
+    initialPrice: 190
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 5263
+    volatility: 0.0013
+    enabled: true
+
+  - symbol: SNOW
+    category: tech
+    initialPrice: 180
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 5555
+    volatility: 0.0017
+    enabled: true
+
+  - symbol: JPM
+    category: financials
+    initialPrice: 240
+    tickSize: 0.01
+    spread: 0.02
+    baseVolume: 4166
+    volatility: 0.001
+    enabled: true
+
+  - symbol: BAC
+    category: financials
+    initialPrice: 45
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 8000
+    volatility: 0.001
+    enabled: true
+
+  - symbol: WFC
+    category: financials
+    initialPrice: 72
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 8000
+    volatility: 0.001
+    enabled: true
+
+  - symbol: GS
+    category: financials
+    initialPrice: 520
+    tickSize: 0.01
+    spread: 0.05
+    baseVolume: 1923
+    volatility: 0.001
+    enabled: true
+
+  - symbol: MS
+    category: financials
+    initialPrice: 120
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 8000
+    volatility: 0.001
+    enabled: true
+
+  - symbol: C
+    category: financials
+    initialPrice: 68
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 8000
+    volatility: 0.001
+    enabled: true
+
+  - symbol: AXP
+    category: financials
+    initialPrice: 290
+    tickSize: 0.01
+    spread: 0.03
+    baseVolume: 3448
+    volatility: 0.001
+    enabled: true
+
+  - symbol: BLK
+    category: financials
+    initialPrice: 1000
+    tickSize: 0.01
+    spread: 0.09
+    baseVolume: 1000
+    volatility: 0.001
+    enabled: true
+
+  - symbol: SCHW
+    category: financials
+    initialPrice: 78
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 8000
+    volatility: 0.001
+    enabled: true
+
+  - symbol: USB
+    category: financials
+    initialPrice: 48
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 8000
+    volatility: 0.001
+    enabled: true
+
+  - symbol: PNC
+    category: financials
+    initialPrice: 195
+    tickSize: 0.01
+    spread: 0.02
+    baseVolume: 5128
+    volatility: 0.001
+    enabled: true
+
+  - symbol: TFC
+    category: financials
+    initialPrice: 45
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 8000
+    volatility: 0.001
+    enabled: true
+
+  - symbol: SPGI
+    category: financials
+    initialPrice: 500
+    tickSize: 0.01
+    spread: 0.04
+    baseVolume: 2000
+    volatility: 0.001
+    enabled: true
+
+  - symbol: CME
+    category: financials
+    initialPrice: 220
+    tickSize: 0.01
+    spread: 0.02
+    baseVolume: 4545
+    volatility: 0.001
+    enabled: true
+
+  - symbol: MET
+    category: financials
+    initialPrice: 82
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 8000
+    volatility: 0.001
+    enabled: true
+
+  - symbol: AIG
+    category: financials
+    initialPrice: 76
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 8000
+    volatility: 0.001
+    enabled: true
+
+  - symbol: BTC
+    category: crypto
+    initialPrice: 95000
+    tickSize: 0.5
+    spread: 28.5
+    baseVolume: 10
+    volatility: 0.0022
+    enabled: true
+
+  - symbol: ETH
+    category: crypto
+    initialPrice: 3400
+    tickSize: 0.5
+    spread: 1
+    baseVolume: 294
+    volatility: 0.0024
+    enabled: true
+
+  - symbol: SOL
+    category: crypto
+    initialPrice: 210
+    tickSize: 0.05
+    spread: 0.05
+    baseVolume: 4761
+    volatility: 0.003
+    enabled: true
+
+  - symbol: BNB
+    category: crypto
+    initialPrice: 680
+    tickSize: 0.05
+    spread: 0.2
+    baseVolume: 1470
+    volatility: 0.0022
+    enabled: true
+
+  - symbol: XRP
+    category: crypto
+    initialPrice: 2.4
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 8000
+    volatility: 0.003
+    enabled: true
+
+  - symbol: ADA
+    category: crypto
+    initialPrice: 0.95
+    tickSize: 0.0001
+    spread: 0.0003
+    baseVolume: 8000
+    volatility: 0.0032
+    enabled: true
+
+  - symbol: AVAX
+    category: crypto
+    initialPrice: 40
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 8000
+    volatility: 0.0032
+    enabled: true
+
+  - symbol: DOT
+    category: crypto
+    initialPrice: 8.5
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 8000
+    volatility: 0.003
+    enabled: true
+
+  - symbol: LINK
+    category: crypto
+    initialPrice: 24
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 8000
+    volatility: 0.003
+    enabled: true
+
+  - symbol: LTC
+    category: crypto
+    initialPrice: 110
+    tickSize: 0.05
+    spread: 0.05
+    baseVolume: 8000
+    volatility: 0.0026
+    enabled: true
+
+  - symbol: XOM
+    category: energy
+    initialPrice: 115
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 8000
+    volatility: 0.0012
+    enabled: true
+
+  - symbol: CVX
+    category: energy
+    initialPrice: 160
+    tickSize: 0.01
+    spread: 0.02
+    baseVolume: 6250
+    volatility: 0.0012
+    enabled: true
+
+  - symbol: COP
+    category: energy
+    initialPrice: 105
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 8000
+    volatility: 0.0012
+    enabled: true
+
+  - symbol: SLB
+    category: energy
+    initialPrice: 42
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 8000
+    volatility: 0.0012
+    enabled: true
+
+  - symbol: EOG
+    category: energy
+    initialPrice: 130
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 7692
+    volatility: 0.0012
+    enabled: true
+
+  - symbol: PSX
+    category: energy
+    initialPrice: 130
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 7692
+    volatility: 0.0012
+    enabled: true
+
+  - symbol: MPC
+    category: energy
+    initialPrice: 155
+    tickSize: 0.01
+    spread: 0.02
+    baseVolume: 6451
+    volatility: 0.0012
+    enabled: true
+
+  - symbol: VLO
+    category: energy
+    initialPrice: 140
+    tickSize: 0.01
+    spread: 0.02
+    baseVolume: 7142
+    volatility: 0.0012
+    enabled: true
+
+  - symbol: OXY
+    category: energy
+    initialPrice: 50
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 8000
+    volatility: 0.0012
+    enabled: true
+
+  - symbol: WMB
+    category: energy
+    initialPrice: 55
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 8000
+    volatility: 0.0012
+    enabled: true
+
+  - symbol: JNJ
+    category: healthcare
+    initialPrice: 155
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 6451
+    volatility: 0.0009
+    enabled: true
+
+  - symbol: UNH
+    category: healthcare
+    initialPrice: 550
+    tickSize: 0.01
+    spread: 0.05
+    baseVolume: 1818
+    volatility: 0.0009
+    enabled: true
+
+  - symbol: PFE
+    category: healthcare
+    initialPrice: 26
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 8000
+    volatility: 0.0009
+    enabled: true
+
+  - symbol: MRK
+    category: healthcare
+    initialPrice: 100
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 8000
+    volatility: 0.0009
+    enabled: true
+
+  - symbol: ABBV
+    category: healthcare
+    initialPrice: 190
+    tickSize: 0.01
+    spread: 0.02
+    baseVolume: 5263
+    volatility: 0.0009
+    enabled: true
+
+  - symbol: TMO
+    category: healthcare
+    initialPrice: 550
+    tickSize: 0.01
+    spread: 0.05
+    baseVolume: 1818
+    volatility: 0.0009
+    enabled: true
+
+  - symbol: ABT
+    category: healthcare
+    initialPrice: 115
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 8000
+    volatility: 0.0009
+    enabled: true
+
+  - symbol: LLY
+    category: healthcare
+    initialPrice: 780
+    tickSize: 0.01
+    spread: 0.07
+    baseVolume: 1282
+    volatility: 0.0011
+    enabled: true
+
+  - symbol: BMY
+    category: healthcare
+    initialPrice: 55
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 8000
+    volatility: 0.0009
+    enabled: true
+
+  - symbol: AMGN
+    category: healthcare
+    initialPrice: 300
+    tickSize: 0.01
+    spread: 0.03
+    baseVolume: 3333
+    volatility: 0.0009
+    enabled: true
+
+  - symbol: CVS
+    category: healthcare
+    initialPrice: 55
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 8000
+    volatility: 0.0009
+    enabled: true
+
+  - symbol: MDT
+    category: healthcare
+    initialPrice: 88
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 8000
+    volatility: 0.0009
+    enabled: true
+
+  - symbol: AMZN
+    category: consumer
+    initialPrice: 220
+    tickSize: 0.01
+    spread: 0.02
+    baseVolume: 4545
+    volatility: 0.0011
+    enabled: true
+
+  - symbol: WMT
+    category: consumer
+    initialPrice: 92
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 8000
+    volatility: 0.0009
+    enabled: true
+
+  - symbol: HD
+    category: consumer
+    initialPrice: 400
+    tickSize: 0.01
+    spread: 0.04
+    baseVolume: 2500
+    volatility: 0.0009
+    enabled: true
+
+  - symbol: MCD
+    category: consumer
+    initialPrice: 290
+    tickSize: 0.01
+    spread: 0.03
+    baseVolume: 3448
+    volatility: 0.0009
+    enabled: true
+
+  - symbol: NKE
+    category: consumer
+    initialPrice: 78
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 8000
+    volatility: 0.0009
+    enabled: true
+
+  - symbol: SBUX
+    category: consumer
+    initialPrice: 95
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 8000
+    volatility: 0.0009
+    enabled: true
+
+  - symbol: TGT
+    category: consumer
+    initialPrice: 135
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 7407
+    volatility: 0.0009
+    enabled: true
+
+  - symbol: LOW
+    category: consumer
+    initialPrice: 250
     tickSize: 0.01
     spread: 0.02
     baseVolume: 4000
     volatility: 0.0009
     enabled: true
 
-  - symbol: BTC
-    category: crypto
-    initialPrice: 62000.00
-    tickSize: 0.50
-    spread: 0.50
-    baseVolume: 12
-    volatility: 0.0020
+  - symbol: COST
+    category: consumer
+    initialPrice: 950
+    tickSize: 0.01
+    spread: 0.09
+    baseVolume: 1052
+    volatility: 0.0009
     enabled: true
 
-  - symbol: JPM
-    category: financials
-    initialPrice: 195.00
+  - symbol: PG
+    category: consumer
+    initialPrice: 165
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 6060
+    volatility: 0.0009
+    enabled: true
+
+  - symbol: KO
+    category: consumer
+    initialPrice: 62
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 8000
+    volatility: 0.0009
+    enabled: true
+
+  - symbol: PEP
+    category: consumer
+    initialPrice: 155
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 6451
+    volatility: 0.0009
+    enabled: true
+
+  - symbol: BA
+    category: industrial
+    initialPrice: 180
     tickSize: 0.01
     spread: 0.02
-    baseVolume: 3000
-    volatility: 0.0011
+    baseVolume: 5555
+    volatility: 0.0013
+    enabled: true
+
+  - symbol: CAT
+    category: industrial
+    initialPrice: 390
+    tickSize: 0.01
+    spread: 0.04
+    baseVolume: 2564
+    volatility: 0.001
+    enabled: true
+
+  - symbol: GE
+    category: industrial
+    initialPrice: 190
+    tickSize: 0.01
+    spread: 0.02
+    baseVolume: 5263
+    volatility: 0.001
+    enabled: true
+
+  - symbol: HON
+    category: industrial
+    initialPrice: 220
+    tickSize: 0.01
+    spread: 0.02
+    baseVolume: 4545
+    volatility: 0.001
+    enabled: true
+
+  - symbol: UPS
+    category: industrial
+    initialPrice: 130
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 7692
+    volatility: 0.001
+    enabled: true
+
+  - symbol: RTX
+    category: industrial
+    initialPrice: 120
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 8000
+    volatility: 0.001
+    enabled: true
+
+  - symbol: LMT
+    category: industrial
+    initialPrice: 480
+    tickSize: 0.01
+    spread: 0.05
+    baseVolume: 2083
+    volatility: 0.001
+    enabled: true
+
+  - symbol: DE
+    category: industrial
+    initialPrice: 460
+    tickSize: 0.01
+    spread: 0.05
+    baseVolume: 2173
+    volatility: 0.001
+    enabled: true
+
+  - symbol: MMM
+    category: industrial
+    initialPrice: 130
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 7692
+    volatility: 0.001
+    enabled: true
+
+  - symbol: EMR
+    category: industrial
+    initialPrice: 120
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 8000
+    volatility: 0.001
+    enabled: true
+
+  - symbol: CSX
+    category: industrial
+    initialPrice: 33
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 8000
+    volatility: 0.001
+    enabled: true
+
+  - symbol: DUK
+    category: utilities
+    initialPrice: 115
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 8000
+    volatility: 0.0007
+    enabled: true
+
+  - symbol: SO
+    category: utilities
+    initialPrice: 88
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 8000
+    volatility: 0.0007
+    enabled: true
+
+  - symbol: D
+    category: utilities
+    initialPrice: 55
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 8000
+    volatility: 0.0007
+    enabled: true
+
+  - symbol: AEP
+    category: utilities
+    initialPrice: 100
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 8000
+    volatility: 0.0007
+    enabled: true
+
+  - symbol: EXC
+    category: utilities
+    initialPrice: 40
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 8000
+    volatility: 0.0007
+    enabled: true
+
+  - symbol: SRE
+    category: utilities
+    initialPrice: 88
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 8000
+    volatility: 0.0007
+    enabled: true
+
+  - symbol: XEL
+    category: utilities
+    initialPrice: 68
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 8000
+    volatility: 0.0007
+    enabled: true
+
+  - symbol: PEG
+    category: utilities
+    initialPrice: 85
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 8000
+    volatility: 0.0007
+    enabled: true
+
+  - symbol: ED
+    category: utilities
+    initialPrice: 100
+    tickSize: 0.01
+    spread: 0.01
+    baseVolume: 8000
+    volatility: 0.0007
     enabled: true

@@ -1,169 +1,182 @@
-# QuantStream Analytics Platform
+# QuantStream
 
-Real-time trading strategy analytics platform built with Spring Boot, Kafka, and React.
+**A real-time market-microstructure analytics platform** — streaming order-book intelligence, from synthetic market to trading-desk dashboard.
 
----
+QuantStream simulates a live limit-order-book market, computes microstructure features from it in real time, runs quantitative signal strategies over the stream, tracks paper-trading positions and PnL, and visualizes the whole thing in a trading-desk-style dashboard.
 
-## Project Status
-
-**Current Phase:** Planning & Understanding  
-**Next Step:** Phase 1 - Data Pipeline Foundation
+It is a **monitoring and analytics** system — it does not place real orders. The goal is to demonstrate an end-to-end streaming data platform: synthetic market generation → stream processing → time-series persistence → live API → interactive frontend.
 
 ---
 
-## What is QuantStream?
+## Highlights
 
-A system that:
-1. Generates realistic price data for 1,000 cryptocurrency tokens
-2. Calculates OHLC candles (1-minute, 5-minute intervals)
-3. Runs trading strategies with technical indicators (RSI, MACD, etc.)
-4. Displays real-time data on a web dashboard
-5. Tracks strategy performance (PnL, win rate, Sharpe ratio)
-
-**Scale:** Handles 1,000 messages/second (scales to 30,000+ with partitioning)
+- **End-to-end streaming pipeline** — synthetic order books flow through Kafka to feature computation, strategy evaluation, position/PnL aggregation, and time-series storage, all decoupled via topics.
+- **Polyglot by design** — a high-throughput **Java 26 / Spring Boot** pipeline for the hot path, a **Python / FastAPI** backend for the read/serve path, and a **React + TypeScript** frontend. Each language is used where it's strongest.
+- **Config-driven horizontal scaling** — the system runs today with a handful of instruments and is engineered to scale to tens of thousands purely through configuration (token set in YAML), never a code rewrite.
+- **Real microstructure features** — order-book imbalance (OBI), microprice, spread (absolute + basis points), and L5 depth, computed per snapshot.
+- **Two live quant strategies** — an OBI-driven market-making signal and a stateful Ornstein-Uhlenbeck mean-reversion strategy with rolling z-score and hysteresis.
+- **Position & PnL tracking** — notional-normalized fills, realized/unrealized PnL, win rate, and cross-strategy consensus/conflict detection per instrument.
+- **Live dashboard** — five pages (Market Overview, Token Detail, Strategy Performance, Positions & Exposure, Live Signals) backed by both REST polling and a live WebSocket feed.
 
 ---
 
 ## Architecture
 
 ```
-Market Data Generator
-         ↓
-       Kafka
-         ↓
-  ┌──────┼──────┐
-  ↓      ↓      ↓
-Database  Aggregator  Strategy
-Consumer  (Kafka      Evaluator
-         Streams)     
-         ↓
-       QuestDB
-         ↓
-    API Gateway
-         ↓
-   React Dashboard
+┌──────────────────────┐
+│ Order-Book Generator │  Java · stochastic order-book simulation (GBM price,
+│ (Spring Boot)        │  mean-reverting imbalance, depth decay) · 1 snap/sec/token
+└──────────┬───────────┘
+           │ Kafka topic: order-book-snapshots
+           ▼
+     ┌─────┴──────────────────────────┐
+     ▼                                ▼
+┌──────────────────┐         ┌──────────────────┐
+│ Feature          │         │ Database Writer  │  Java · batched
+│ Calculator (Java)│         │ (Java)           │  writes to QuestDB
+│ OBI, microprice, │         └────────┬─────────┘
+│ spread, depth    │                  │
+└────────┬─────────┘                  ▼
+         │ Kafka topic: features   ┌───────────────────────────┐
+         ▼                         │      QuestDB (TSDB)       │
+┌──────────────────┐              │  order_book_snapshots     │
+│ Strategy Engine  │  Java        │  features · signals       │
+│ OBI MM · O-U     │              │  positions · strategy_pnl │
+│ mean reversion   │              └────────────┬──────────────┘
+└────────┬─────────┘                           │
+         │ Kafka topic: signals                │
+         ▼                                      │
+┌──────────────────┐                            │
+│ Signal Aggregator│  Java · position tracking, │
+│ notional sizing, │  realized/unrealized PnL,  │
+│ PnL, conflicts   │──────────────┐             │
+└──────────────────┘  writes ─────┘             │
+                                                │
+                          ┌─────────────────────┴────────────┐
+                          │  Dashboard API (Python / FastAPI) │
+                          │  REST over QuestDB (httpx async)  │
+                          │  + WebSocket tailing Kafka topics │
+                          └─────────────────┬─────────────────┘
+                                            │ HTTP + WS
+                                            ▼
+                          ┌───────────────────────────────────┐
+                          │   React + TypeScript Frontend     │
+                          │   Vite · Lightweight Charts ·     │
+                          │   Recharts · Zustand · TanStack   │
+                          └───────────────────────────────────┘
 ```
 
 ---
 
-## Technology Stack
+## Tech Stack
 
-**Backend:**
-- Java 21 + Spring Boot 3.3+
-- Apache Kafka 3.8+ (message streaming)
-- Kafka Streams (real-time aggregation)
-- QuestDB (time-series database)
-- ta4j (technical analysis)
-
-**Frontend:**
-- React 18 + TypeScript
-- Lightweight Charts (TradingView)
-- WebSocket (STOMP)
-
-**Infrastructure:**
-- Docker Compose (local development)
+| Layer | Technology | Why |
+|-------|-----------|-----|
+| **Streaming pipeline** | Java 26, Spring Boot 4.0.7, Spring for Apache Kafka | Throughput, threading, and mature Kafka integration on the hot path |
+| **Message broker** | Apache Kafka (Confluent 7.6.1) | Decouples producers/consumers; the backbone of the streaming design |
+| **Time-series store** | QuestDB 8.3.2 | Fast ingestion, SQL, `SAMPLE BY` / `LATEST ON` built for time-series |
+| **Serving API** | Python 3.11+, FastAPI, httpx, `websockets` | Async I/O for read-heavy REST + a live WebSocket feed |
+| **Frontend** | React 18, TypeScript, Vite 6, TanStack Query, Zustand | Typed, real-time UI; server cache (REST polling) + live store (WS) |
+| **Charts** | TradingView Lightweight Charts (candles), Recharts (analytics) | Purpose-built financial candles + flexible analytics charts |
+| **Infra** | Docker Compose | One-command local infra (Kafka, Zookeeper, QuestDB, Kafka-UI) |
 
 ---
 
-## Documentation
+## Data Flow
 
-### Start Here
-1. **[Understanding Docs](docs/understanding/)** - Learn core concepts FIRST
-   - [01 - Kafka Basics](docs/understanding/01-kafka-basics.md)
-   - [02 - Time-Series Databases](docs/understanding/02-time-series-databases.md)
-   - [03 - OHLC Candles](docs/understanding/03-ohlc-candles.md)
-   - [04 - Kafka Streams](docs/understanding/04-kafka-streams.md)
-   - [05 - WebSocket](docs/understanding/05-websocket.md)
-   - [06 - Technical Indicators](docs/understanding/06-technical-indicators.md)
-
-2. **[Architecture](docs/architecture/ARCHITECTURE.md)** - System design
-
-3. **[Phases](docs/phases/PHASES-OVERVIEW.md)** - Implementation plan
-
-### Implementation (Coming Soon)
-- Phase 1: Data Pipeline
-- Phase 2: Aggregation
-- Phase 3: API Layer
-- Phase 4: Frontend
-- Phase 5: Strategies
-- Phase 6: Polish & Deploy
+1. **Generate** — the order-book generator emits a 5-level bid/ask snapshot per instrument every second, using stochastic models (geometric Brownian motion for price, mean-reverting order-book imbalance, exponential depth decay).
+2. **Feature-ize** — the feature calculator derives OBI, microprice, spread, spread (bps), and L5 depth from each snapshot and republishes to the `features` topic.
+3. **Persist** — the database writer batches raw snapshots and features into QuestDB.
+4. **Signal** — the strategy engine consumes features and emits `BUY` / `SELL` / `CLOSE` signals with a confidence and a human-readable reason.
+5. **Aggregate** — the signal aggregator turns signals into notional-normalized fills, maintains per-strategy/per-token positions, computes realized/unrealized PnL and win rate, and detects cross-strategy conflicts.
+6. **Serve** — the FastAPI backend exposes REST endpoints over QuestDB and a WebSocket that tails the live Kafka `features`/`signals` streams.
+7. **Visualize** — the React dashboard renders live market state, candles with signal markers, strategy leaderboards, positions, and a streaming signal feed.
 
 ---
 
-## Prerequisites
+## Strategies
 
-### Knowledge
-- Java basics (classes, methods, OOP)
-- Spring Boot basics (optional, we'll learn together)
-- Basic understanding of REST APIs
-- Basic understanding of databases
+| Strategy | Type | Idea |
+|----------|------|------|
+| **OBI Market Making** | Stateless | Reads order-book imbalance; goes long when buy pressure exceeds a threshold and short when sell pressure dominates. |
+| **Ornstein-Uhlenbeck Mean Reversion** | Stateful | Maintains a rolling window of microprice, computes a z-score `(price − mean) / stdev`, enters against extremes and exits near the mean. Uses hysteresis (entry band wider than exit band) and edge-triggered `FLAT / LONG / SHORT` state, with a warmup equal to the window size (no historical backfill — state is built forward from the live stream). |
 
-### Tools to Install
-- **Java 21** (JDK)
-- **Maven** (build tool)
-- **Docker Desktop** (for Kafka + QuestDB)
-- **Node.js 18+** (for frontend, later)
-- **IDE** (IntelliJ IDEA recommended)
+The strategy layer is an SPI (`Strategy` interface + factories), so new strategies are added without touching the engine wiring.
 
 ---
 
-## Quick Start (Phase 1)
+## Project Structure
 
-*Coming soon after understanding docs are reviewed*
-
----
-
-## Learning Goals
-
-### High-Level Design (HLD)
-- Distributed system architecture
-- Service decomposition
-- Kafka topic design and partitioning
-- Data flow and orchestration
-- Scalability patterns
-
-### Low-Level Design (LLD)
-- Kafka Streams topology
-- Time-series data modeling
-- WebSocket connection management
-- Windowed aggregation algorithms
-- Concurrency and thread safety
-
-### Domain Knowledge
-- Trading systems
-- Technical indicators
-- Market data processing
-- Real-time analytics
+```
+.
+├── common/                 # Shared domain models, Kafka config, TokenRegistry (YAML-driven)
+├── order-book-generator/   # Java: synthetic order-book producer
+├── feature-calculator/     # Java: microstructure feature computation
+├── strategy-engine/        # Java: strategy SPI + implementations
+├── signal-aggregator/      # Java: positions, PnL, conflict detection
+├── database-writer/        # Java: QuestDB persistence
+├── dashboard-api/          # Python/FastAPI: REST over QuestDB + WebSocket feed
+├── frontend/               # React + TypeScript + Vite dashboard
+├── scripts/                # start / stop / status / clean lifecycle scripts
+├── docs/                   # Concepts, planning, and engineering notes
+└── docker-compose.yml      # Kafka, Zookeeper, QuestDB, Kafka-UI
+```
 
 ---
 
-## Project Principles
+## Getting Started
 
-1. **Incremental Development** - Each phase builds on the previous
-2. **No Throwaway Code** - We never restart from scratch
-3. **Always Working** - System works after each phase
-4. **Learn by Doing** - Code with understanding, not copy-paste
-5. **Free & Local** - Everything runs on your laptop
+### Prerequisites
+
+- **JDK 26** and **Maven**
+- **Docker Desktop** (Kafka + QuestDB)
+- **Python 3.11+** and [`uv`](https://github.com/astral-sh/uv)
+- **Node.js 18+**
+
+### Run the whole stack
+
+The lifecycle scripts bring everything up in the correct order (infra → build → pipeline → API → frontend), waiting on real readiness at each tier:
+
+```bash
+./scripts/start.sh      # bring up the entire stack
+./scripts/status.sh     # one-glance health of every tier + live QuestDB row counts
+./scripts/stop.sh --down  # clean teardown (removes containers, keeps QuestDB data volume)
+```
+
+Once up:
+
+| Service | URL |
+|---------|-----|
+| Frontend dashboard | http://localhost:5173 |
+| Dashboard API | http://localhost:8000 |
+| QuestDB console | http://localhost:9001 |
+| Kafka UI | http://localhost:8080 |
+
+> **Note:** the Ornstein-Uhlenbeck strategy has a ~10-minute warmup (600 observations) before it emits signals — it builds its rolling window forward from the live stream rather than backfilling.
 
 ---
 
-## Current Phase: Understanding
+## Scaling Design
 
-**TODO:**
-- [ ] Read all understanding docs (`docs/understanding/`)
-- [ ] Review architecture (`docs/architecture/ARCHITECTURE.md`)
-- [ ] Review phases (`docs/phases/PHASES-OVERVIEW.md`)
-- [ ] Ask questions (save in `docs/QUESTIONS.md`)
-- [ ] Set up environment (Java, Docker, IDE)
+The project is deliberately built so that going from a handful of instruments to production scale is a **configuration change, not a rewrite**:
+
+- The instrument universe is defined in external YAML and loaded by a shared `TokenRegistry`; no token lists are hardcoded.
+- Every service processes instruments generically, so throughput scales by adding Kafka partitions and running more consumer instances (horizontal partitioning by symbol).
+- The intended production target is on the order of tens of thousands of instruments at ~1 message/second each, distributed across a Kafka cluster and multiple strategy-engine instances.
 
 ---
 
-## Questions?
+## Notable Engineering Decisions
 
-Save questions in `docs/QUESTIONS.md` as you go through the docs.
+- **Notional-normalized position sizing** — fills are sized by notional (`units = notional / price`) rather than fixed lots, so PnL is comparable across instruments with wildly different price scales.
+- **Intraday-only data model** — no historical backfill; stateful strategies build their windows forward from the live stream, with tiered retention handled separately from the hot path.
+- **QuestDB ingestion via PG-wire JDBC** — chosen over the ILP client to avoid a JVM incompatibility; the serving layer reads via QuestDB's HTTP `/exec` with `SAMPLE BY` for candle aggregation and `LATEST ON` for current state.
+- **Split read/write backends** — the Java pipeline owns the write path (ingestion, computation), while a separate FastAPI service owns the read/serve path, keeping the two workloads independent.
+
+Deeper write-ups live in [`docs/`](docs/) — see `docs/concepts/` for microstructure fundamentals and design notes, and `docs/engineering/` for hurdles hit and how they were fixed.
 
 ---
 
 ## License
 
-MIT License - Free to use for learning and portfolio projects.
+MIT — free to use for learning and portfolio purposes.

@@ -27,13 +27,35 @@ done
 
 cd "$REPO_ROOT"
 
-# ---- Dashboard -------------------------------------------------------------
-info "Stopping dashboard API"
-if [ -f "${PID_DIR}/dashboard-api.pid" ] && kill "$(cat "${PID_DIR}/dashboard-api.pid")" 2>/dev/null; then
-  ok "dashboard stopped"; rm -f "${PID_DIR}/dashboard-api.pid"
+# ---- Frontend (Vite dev server) --------------------------------------------
+# Vite forks child processes, so a PID file is unreliable — kill whatever holds
+# the dev port. This is what guarantees ":5173 is free next time".
+info "Stopping frontend (Vite dev server)"
+if [ -f "${PID_DIR}/frontend.pid" ] && kill "$(cat "${PID_DIR}/frontend.pid")" 2>/dev/null; then
+  ok "frontend stopped"; rm -f "${PID_DIR}/frontend.pid"
+fi
+if pids="$(lsof -ti "tcp:${FRONTEND_PORT}" 2>/dev/null)"; then
+  kill $pids 2>/dev/null || true
+  ok "frontend port ${FRONTEND_PORT} freed"
 else
-  # Fallback: uvicorn on the dashboard port.
-  if pids="$(lsof -ti "tcp:${DASHBOARD_PORT}" 2>/dev/null)"; then kill $pids 2>/dev/null && ok "dashboard stopped (by port)"; else warn "dashboard not running"; fi
+  warn "frontend not running"
+fi
+rm -f "${PID_DIR}/frontend.pid"
+
+# ---- Dashboard -------------------------------------------------------------
+# `uv run uvicorn` forks a child process, so killing the recorded PID (the uv
+# wrapper) leaves the uvicorn child holding the port. Kill the wrapper AND always
+# sweep the port — the port sweep is what guarantees ":8000 is free next time".
+info "Stopping dashboard API"
+if [ -f "${PID_DIR}/dashboard-api.pid" ]; then
+  kill "$(cat "${PID_DIR}/dashboard-api.pid")" 2>/dev/null || true
+  rm -f "${PID_DIR}/dashboard-api.pid"
+fi
+if pids="$(lsof -ti "tcp:${DASHBOARD_PORT}" 2>/dev/null)"; then
+  kill $pids 2>/dev/null || true
+  ok "dashboard stopped (port ${DASHBOARD_PORT} freed)"
+else
+  warn "dashboard not running"
 fi
 
 # ---- JVM services (reverse order) ------------------------------------------

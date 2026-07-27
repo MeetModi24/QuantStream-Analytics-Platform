@@ -16,6 +16,8 @@ QUESTDB_HTTP="${QUESTDB_HTTP:-http://localhost:9001}"
 QUESTDB_PG_PORT="${QUESTDB_PG_PORT:-8812}"
 KAFKA_CONTAINER="${KAFKA_CONTAINER:-kafka}"
 DASHBOARD_PORT="${DASHBOARD_PORT:-8000}"
+FRONTEND_PORT="${FRONTEND_PORT:-5173}"
+FRONTEND_DIR="${REPO_ROOT}/frontend"
 
 # Docker containers, in dependency order (compose handles depends_on, but we wait per-tier).
 INFRA_CONTAINERS=(zookeeper kafka questdb kafka-ui)

@@ -85,6 +85,25 @@ async def features(
     return rows
 
 
+@app.get("/api/features/recent")
+async def features_recent(minutes: int = Query(2, ge=1, le=60)):
+    """Recent feature rows for ALL tokens in a single query, grouped by token.
+
+    Backs the Market Overview sparklines: one request instead of one-per-token, so the
+    page stays responsive whether there are 4 tokens or hundreds. Each token's list is
+    oldest-first for direct charting.
+    """
+    rows = await questdb.query(
+        f"SELECT ts, token, obi, microprice, mid_price, spread, spread_bps "
+        f"FROM features WHERE ts > dateadd('m', -{minutes}, now()) "
+        f"ORDER BY token, ts"
+    )
+    grouped: dict[str, list[dict]] = {}
+    for r in rows:
+        grouped.setdefault(r["token"], []).append(r)
+    return grouped
+
+
 # ----------------------------------------------------------------------------- signals
 @app.get("/api/signals")
 async def signals(

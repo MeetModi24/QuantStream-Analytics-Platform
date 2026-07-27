@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import clsx from "clsx";
 import { api } from "@/lib/api";
 import { useLiveStore } from "@/lib/liveStore";
-import type { FeatureRow, SignalRow } from "@/lib/types";
+import type { SignalRow } from "@/lib/types";
 import { fmtNum, fmtPrice, fmtTime } from "@/lib/format";
 import { Card, ObiBar, Spinner, ErrorState, ActionBadge, Stat } from "@/components/ui";
 import { Sparkline } from "@/components/Sparkline";
@@ -18,17 +18,12 @@ export function MarketOverview() {
   const tokensQ = useQuery({ queryKey: ["tokens"], queryFn: api.tokens });
   const tokens = tokensQ.data ?? [];
 
-  // Per-token recent feature history for the sparkline (REST, refetched gently).
+  // Recent feature history for the sparklines — one batched request for all tokens
+  // (not one-per-token), so the page scales past a handful of tokens.
   const histQ = useQuery({
-    queryKey: ["market-hist", tokens],
-    enabled: tokens.length > 0,
+    queryKey: ["market-hist"],
     refetchInterval: 5000,
-    queryFn: async () => {
-      const entries = await Promise.all(
-        tokens.map(async (t) => [t, await api.features(t, 60)] as const),
-      );
-      return Object.fromEntries(entries) as Record<string, FeatureRow[]>;
-    },
+    queryFn: () => api.featuresRecent(2),
   });
 
   // Latest signal per token, for the "last signal" column.

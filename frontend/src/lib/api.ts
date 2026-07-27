@@ -26,6 +26,11 @@ export const api = {
   features: (token: string, limit = 300) =>
     get<FeatureRow[]>(`/features?token=${encodeURIComponent(token)}&limit=${limit}`),
 
+  // Recent features for ALL tokens in one request — backs the Market Overview
+  // sparklines so the page scales past a handful of tokens without an N+1 fetch.
+  featuresRecent: (minutes = 2) =>
+    get<Record<string, FeatureRow[]>>(`/features/recent?minutes=${minutes}`),
+
   signals: (token?: string, limit = 100) =>
     get<SignalRow[]>(
       `/signals?limit=${limit}${token ? `&token=${encodeURIComponent(token)}` : ""}`,

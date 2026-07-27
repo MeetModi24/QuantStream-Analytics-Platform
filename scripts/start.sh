@@ -27,11 +27,12 @@
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 
-DO_BUILD=true; DO_DASHBOARD=true; INFRA_ONLY=false
+DO_BUILD=true; DO_DASHBOARD=true; DO_FRONTEND=true; INFRA_ONLY=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --no-build)     DO_BUILD=false; shift ;;
     --no-dashboard) DO_DASHBOARD=false; shift ;;
+    --no-frontend)  DO_FRONTEND=false; shift ;;
     --infra-only)   INFRA_ONLY=true; shift ;;
     -h|--help)      sed -n '2,30p' "$0"; exit 0 ;;
     *) echo "Unknown arg: $1" >&2; exit 2 ;;
@@ -97,8 +98,23 @@ if $DO_DASHBOARD; then
   fi
 fi
 
+# ---- 5. Frontend (Vite dev server) -----------------------------------------
+if $DO_FRONTEND; then
+  info "Starting frontend (Vite) on port ${FRONTEND_PORT}"
+  if lsof -ti "tcp:${FRONTEND_PORT}" >/dev/null 2>&1; then
+    warn "port ${FRONTEND_PORT} already in use — assuming frontend already running"
+  elif [ ! -d "${FRONTEND_DIR}/node_modules" ]; then
+    warn "frontend deps missing — run 'npm install' in ${FRONTEND_DIR} first; skipping"
+  else
+    ( cd "$FRONTEND_DIR" && \
+      nohup npm run dev > "${LOG_DIR}/frontend.log" 2>&1 & echo "$!" > "${PID_DIR}/frontend.pid" )
+    ok "frontend launching -> ${LOG_DIR}/frontend.log"
+  fi
+fi
+
 echo
 info "Stack up. Endpoints:"
+echo "  Frontend     http://localhost:${FRONTEND_PORT}"
 echo "  Dashboard    http://localhost:${DASHBOARD_PORT}"
 echo "  QuestDB UI   ${QUESTDB_HTTP}"
 echo "  Kafka UI     http://localhost:8080"
