@@ -17,6 +17,24 @@ quantstream:
       window: 600      # rolling microprice lookback (~10 min at 1 obs/sec) = warmup
       entry-z: 2.0     # |z| >= 2.0 opens a reversion position
       exit-z: 0.5      # |z| <= 0.5 closes (must be < entry-z for hysteresis)
+    momentum:          # Dual moving-average crossover trend-following (stateful)
+      enabled: true
+      fast-window: 60  # fast microprice MA (~1 min at 1 obs/sec)
+      slow-window: 300 # slow microprice MA (~5 min) — this is the warmup length
+      entry-bps: 5.0   # fast-vs-slow gap (bps) that opens a trend position
+      exit-bps: 1.0    # gap (bps) that closes it (must be < entry-bps for hysteresis)
+    kalman:            # Constant-velocity Kalman filter trend estimator (stateful, adaptive)
+      enabled: true
+      warmup: 120      # filter settling period (~2 min at 1 obs/sec) = warmup length
+      process-noise: 0.01     # q — how freely level/velocity may drift per step (higher = more reactive)
+      measurement-noise: 1.0  # r — assumed variance of a single microprice tick (higher = more smoothing)
+      entry-bps: 3.0   # estimated per-tick velocity (bps) that opens a trend position
+      exit-bps: 0.5    # velocity (bps) that closes it (must be < entry-bps for hysteresis)
+    flow:              # Order-flow persistence (VPIN-style toxicity proxy on OBI, stateful)
+      enabled: true
+      window: 120      # rolling OBI lookback (~2 min at 1 obs/sec) = warmup length
+      entry: 0.15      # sustained mean-OBI level that opens a position (OBI is in [-1, 1])
+      exit: 0.05       # mean-OBI level that closes it (must be < entry for hysteresis)
 
 server:
   port: 8084

@@ -82,7 +82,7 @@ export function TokenDetail() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-end justify-between">
+      <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <BackLink onClick={() => navigate("/")} />
           <h1 className="mt-1 text-xl font-semibold tnum">{token}</h1>
