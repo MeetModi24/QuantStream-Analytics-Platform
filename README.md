@@ -12,9 +12,9 @@ It is a **monitoring and analytics** system — it does not place real orders. T
 
 - **End-to-end streaming pipeline** — synthetic order books flow through Kafka to feature computation, strategy evaluation, position/PnL aggregation, and time-series storage, all decoupled via topics.
 - **Polyglot by design** — a high-throughput **Java 26 / Spring Boot** pipeline for the hot path, a **Python / FastAPI** backend for the read/serve path, and a **React + TypeScript** frontend. Each language is used where it's strongest.
-- **Config-driven horizontal scaling** — the system runs today with a handful of instruments and is engineered to scale to tens of thousands purely through configuration (token set in YAML), never a code rewrite.
+- **Config-driven horizontal scaling** — the system runs today with **100 real-ticker instruments across 8 sectors** and is engineered to scale to tens of thousands purely through configuration (token set in YAML), never a code rewrite.
 - **Real microstructure features** — order-book imbalance (OBI), microprice, spread (absolute + basis points), and L5 depth, computed per snapshot.
-- **Two live quant strategies** — an OBI-driven market-making signal and a stateful Ornstein-Uhlenbeck mean-reversion strategy with rolling z-score and hysteresis.
+- **Five live quant strategies** — an OBI market-making signal, an Ornstein-Uhlenbeck mean-reversion, a dual-MA momentum crossover, a Kalman-filter adaptive trend estimator, and an order-flow-persistence (VPIN-style) signal — spanning three distinct theses (reversion, trend, flow).
 - **Position & PnL tracking** — notional-normalized fills, realized/unrealized PnL, win rate, and cross-strategy consensus/conflict detection per instrument.
 - **Live dashboard** — five pages (Market Overview, Token Detail, Strategy Performance, Positions & Exposure, Live Signals) backed by both REST polling and a live WebSocket feed.
 
@@ -41,8 +41,9 @@ It is a **monitoring and analytics** system — it does not place real orders. T
          ▼                         │      QuestDB (TSDB)       │
 ┌──────────────────┐              │  order_book_snapshots     │
 │ Strategy Engine  │  Java        │  features · signals       │
-│ OBI MM · O-U     │              │  positions · strategy_pnl │
-│ mean reversion   │              └────────────┬──────────────┘
+│ 5 strategies:    │              │  positions · strategy_pnl │
+│ OBI·O-U·mom·     │              └────────────┬──────────────┘
+│ Kalman·flow      │                           │
 └────────┬─────────┘                           │
          │ Kafka topic: signals                │
          ▼                                      │
@@ -87,7 +88,7 @@ It is a **monitoring and analytics** system — it does not place real orders. T
 1. **Generate** — the order-book generator emits a 5-level bid/ask snapshot per instrument every second, using stochastic models (geometric Brownian motion for price, mean-reverting order-book imbalance, exponential depth decay).
 2. **Feature-ize** — the feature calculator derives OBI, microprice, spread, spread (bps), and L5 depth from each snapshot and republishes to the `features` topic.
 3. **Persist** — the database writer batches raw snapshots and features into QuestDB.
-4. **Signal** — the strategy engine consumes features and emits `BUY` / `SELL` / `CLOSE` signals with a confidence and a human-readable reason.
+4. **Signal** — the strategy engine runs all five strategies over every token, emitting `BUY` / `SELL` / `CLOSE` signals with a confidence and a human-readable reason.
 5. **Aggregate** — the signal aggregator turns signals into notional-normalized fills, maintains per-strategy/per-token positions, computes realized/unrealized PnL and win rate, and detects cross-strategy conflicts.
 6. **Serve** — the FastAPI backend exposes REST endpoints over QuestDB and a WebSocket that tails the live Kafka `features`/`signals` streams.
 7. **Visualize** — the React dashboard renders live market state, candles with signal markers, strategy leaderboards, positions, and a streaming signal feed.
@@ -96,12 +97,19 @@ It is a **monitoring and analytics** system — it does not place real orders. T
 
 ## Strategies
 
-| Strategy | Type | Idea |
-|----------|------|------|
-| **OBI Market Making** | Stateless | Reads order-book imbalance; goes long when buy pressure exceeds a threshold and short when sell pressure dominates. |
-| **Ornstein-Uhlenbeck Mean Reversion** | Stateful | Maintains a rolling window of microprice, computes a z-score `(price − mean) / stdev`, enters against extremes and exits near the mean. Uses hysteresis (entry band wider than exit band) and edge-triggered `FLAT / LONG / SHORT` state, with a warmup equal to the window size (no historical backfill — state is built forward from the live stream). |
+Five strategies run concurrently over every token, spanning three distinct theses — **flow**, **mean reversion**, and **trend** — so the dashboard surfaces genuine cross-strategy agreement and conflict rather than variations of one idea.
 
-The strategy layer is an SPI (`Strategy` interface + factories), so new strategies are added without touching the engine wiring.
+| Strategy | Type | Thesis | Idea |
+|----------|------|--------|------|
+| **OBI Market Making** | Stateless | Flow | Reads order-book imbalance; goes long when buy pressure exceeds a threshold and short when sell pressure dominates. Reacts to an *instantaneous* imbalance. |
+| **Flow Toxicity** | Stateful | Flow | A volume-free, VPIN-style order-flow proxy: a rolling mean of signed OBI. Fires only when imbalance stays one-sided across the whole window — *persistence*, not a spike — so it deliberately disagrees with the instantaneous OBI signal. |
+| **Ornstein-Uhlenbeck Mean Reversion** | Stateful | Reversion | Rolling window of microprice with a z-score `(price − mean) / stdev`; enters against extremes and exits near the mean. |
+| **Dual-MA Momentum** | Stateful | Trend | Fast/slow moving-average crossover of the microprice; rides the trend when the fast MA pulls decisively away from the slow, closes when they converge. The opposite thesis to O-U reversion. |
+| **Kalman Adaptive Trend** | Stateful | Trend | A constant-velocity Kalman filter recursively estimating a hidden *level + velocity* from the microprice; trades the estimated velocity. Unlike the fixed-window dual-MA, its process/measurement-noise ratio self-tunes how fast it trusts a new move. |
+
+All stateful strategies share the same discipline: edge-triggered `FLAT / LONG / SHORT` state (one signal per regime change, not per tick), hysteresis (entry band wider than exit band) to avoid whipsaw, and a warmup equal to the window size — **no historical backfill; state is built forward from the live stream**.
+
+The strategy layer is an SPI (`Strategy` interface + factories auto-discovered as Spring beans), so new strategies are added — and tuned or disabled via YAML — without touching the engine wiring or anything downstream.
 
 ---
 
@@ -158,10 +166,11 @@ Once up:
 
 ## Scaling Design
 
-The project is deliberately built so that going from a handful of instruments to production scale is a **configuration change, not a rewrite**:
+The project is deliberately built so that scaling the instrument universe is a **configuration change, not a rewrite**. It runs today with **100 instruments** — real tickers spanning 8 sectors (tech, financials, crypto, energy, healthcare, consumer, industrial, utilities), each with sector-calibrated volatility and spread — and the exact same code path served a single token during early development:
 
-- The instrument universe is defined in external YAML and loaded by a shared `TokenRegistry`; no token lists are hardcoded.
-- Every service processes instruments generically, so throughput scales by adding Kafka partitions and running more consumer instances (horizontal partitioning by symbol).
+- The instrument universe is defined in external YAML and loaded by a shared `TokenRegistry`; no token lists are hardcoded, so 1 → 100 → tens of thousands is purely an edit to that file.
+- Every service processes instruments generically (one generator/consumer path per enabled token), so throughput scales by adding Kafka partitions and running more consumer instances (horizontal partitioning by symbol).
+- At 100 tokens the pipeline sustains ~100 snapshots/second end-to-end (100 feature rows/second) with all five strategies evaluating every token.
 - The intended production target is on the order of tens of thousands of instruments at ~1 message/second each, distributed across a Kafka cluster and multiple strategy-engine instances.
 
 ---
