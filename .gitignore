@@ -49,5 +49,3 @@ htmlcov/
 
 # Runtime logs and PIDs from scripts/start.sh (dev only)
 logs/
-
-.fastcontext/

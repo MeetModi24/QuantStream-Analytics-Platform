@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from typing import Any
 
 from aiokafka import AIOKafkaConsumer
@@ -105,7 +106,10 @@ class LiveFeed:
                 except json.JSONDecodeError:
                     log.warning("Skipping non-JSON message on %s", record.topic)
                     continue
-                envelope = {"kind": kind, "data": payload}
+                # Stamp the moment this message left Kafka for the API, in epoch
+                # milliseconds. The browser uses it to split end-to-end latency into
+                # a pipeline leg (event -> API) and a delivery leg (API -> screen).
+                envelope = {"kind": kind, "data": payload, "api_ts": time.time() * 1000.0}
                 # Snapshot subscribers under lock, then fan out without holding it.
                 async with self._lock:
                     targets = list(self._subscribers)

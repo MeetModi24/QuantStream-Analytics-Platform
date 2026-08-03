@@ -2,11 +2,13 @@
 // auto-reconnect and backoff. Mount once, near the app root.
 import { useEffect, useRef } from "react";
 import { useLiveStore } from "./liveStore";
+import { eventMillisFromPayload, useLatencyStore } from "./latencyStore";
 import type { LiveEnvelope } from "./types";
 
 export function useLiveFeed() {
   const ingest = useLiveStore((s) => s.ingest);
   const setStatus = useLiveStore((s) => s.setStatus);
+  const sample = useLatencyStore((s) => s.sample);
   const retry = useRef(0);
   const stopped = useRef(false);
 
@@ -26,8 +28,13 @@ export function useLiveFeed() {
         setStatus("open");
       };
       ws.onmessage = (ev) => {
+        // Capture the receive time as early as possible — before JSON.parse — so the
+        // measured delivery leg isn't inflated by our own decode cost.
+        const receiveMs = Date.now();
         try {
-          ingest(JSON.parse(ev.data) as LiveEnvelope);
+          const env = JSON.parse(ev.data) as LiveEnvelope;
+          sample(eventMillisFromPayload(env.data), env.api_ts, receiveMs);
+          ingest(env);
         } catch {
           /* ignore malformed frame */
         }
@@ -49,5 +56,5 @@ export function useLiveFeed() {
       if (timer) clearTimeout(timer);
       ws?.close();
     };
-  }, [ingest, setStatus]);
+  }, [ingest, setStatus, sample]);
 }

@@ -2,6 +2,7 @@ import clsx from "clsx";
 import { NavLink, useLocation } from "react-router-dom";
 import { useEffect, useState, type ReactNode } from "react";
 import { useLiveStore } from "@/lib/liveStore";
+import { useLatencyStore } from "@/lib/latencyStore";
 import { fmtTime } from "@/lib/format";
 
 const NAV = [
@@ -36,6 +37,46 @@ function ConnDot() {
           lagging {lagging}
         </span>
       )}
+    </div>
+  );
+}
+
+/** Live event -> screen latency, with a per-leg breakdown on hover. Reads the throttled
+ *  summaries from the latency store (recomputed at most a couple times a second). */
+function LatencyMeter() {
+  const total = useLatencyStore((s) => s.total);
+  const pipeline = useLatencyStore((s) => s.pipeline);
+  const delivery = useLatencyStore((s) => s.delivery);
+  const count = useLatencyStore((s) => s.count);
+
+  if (count === 0) return null;
+
+  // Green under 250ms, amber under 1s, red beyond — monitoring-plane targets, not
+  // trading-path targets (see docs/concepts/03-hft-monitoring-at-scale.md).
+  const tone =
+    total.p99 < 250 ? "text-buy" : total.p99 < 1000 ? "text-hold" : "text-sell";
+
+  const fmt = (ms: number) => (ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`);
+
+  return (
+    <div
+      className="hidden items-center gap-2 text-xs text-text-secondary sm:flex"
+      title={
+        `event → screen latency (${count} samples)\n` +
+        `pipeline (event→API)  p50 ${fmt(pipeline.p50)}  p99 ${fmt(pipeline.p99)}\n` +
+        `delivery (API→screen) p50 ${fmt(delivery.p50)}  p99 ${fmt(delivery.p99)}\n` +
+        `total    (event→screen) p50 ${fmt(total.p50)}  p99 ${fmt(total.p99)}`
+      }
+    >
+      <span className="text-text-muted">latency</span>
+      <span className={clsx("tnum font-medium", tone)}>
+        {fmt(total.p50)}
+        <span className="text-text-muted"> p50</span>
+      </span>
+      <span className={clsx("tnum", tone)}>
+        {fmt(total.p99)}
+        <span className="text-text-muted"> p99</span>
+      </span>
     </div>
   );
 }
@@ -164,7 +205,11 @@ export function AppShell({ children }: { children: ReactNode }) {
             <Brand />
           </div>
         </div>
-        <ConnDot />
+        <div className="flex items-center gap-4">
+          <LatencyMeter />
+          <span className="hidden h-4 w-px bg-border sm:block" />
+          <ConnDot />
+        </div>
       </header>
 
       {/* Main */}

@@ -68,7 +68,9 @@ export interface CandleRow {
   close: number;
 }
 
-// WebSocket envelope emitted by live_feed.py
+// WebSocket envelope emitted by live_feed.py.
+// `api_ts` is epoch-ms stamped by the API when the message left Kafka; used to split
+// end-to-end latency into a pipeline leg (event -> API) and a delivery leg (API -> screen).
 export type LiveEnvelope =
-  | { kind: "feature"; data: FeatureRow; lagging?: number }
-  | { kind: "signal"; data: SignalRow; lagging?: number };
+  | { kind: "feature"; data: FeatureRow; lagging?: number; api_ts?: number }
+  | { kind: "signal"; data: SignalRow; lagging?: number; api_ts?: number };
