@@ -29,6 +29,9 @@ export function LiveSignals() {
   const [token, setToken] = useState<string>("");
   const [strategy, setStrategy] = useState<string>("");
   const [action, setAction] = useState<Action | "">("");
+  // Show a small, readable window by default; the full feed is one click away.
+  const [showAll, setShowAll] = useState(false);
+  const DEFAULT_LIMIT = 25;
 
   // Merge live (newest-first) over the REST seed, de-duped by ts+strategy+token.
   const merged = useMemo(() => {
@@ -59,6 +62,9 @@ export function LiveSignals() {
     for (const s of filtered) c[s.action]++;
     return c;
   }, [filtered]);
+
+  const visible = showAll ? filtered.slice(0, 300) : filtered.slice(0, DEFAULT_LIMIT);
+  const hiddenCount = filtered.length - visible.length;
 
   return (
     <div className="space-y-6">
@@ -107,7 +113,7 @@ export function LiveSignals() {
 
       <Card
         title={`Feed (${filtered.length})`}
-        bodyClassName="p-0"
+        bodyClassName="p-0 overflow-hidden"
         right={
           <div className="flex flex-wrap items-center gap-2">
             <Select value={token} onChange={setToken} placeholder="All tokens" options={tokensQ.data ?? []} />
@@ -145,6 +151,7 @@ export function LiveSignals() {
             {merged.length === 0 ? "Waiting for signals…" : "No signals match the current filters."}
           </EmptyState>
         ) : (
+          <>
           <div className="max-h-[600px] overflow-auto">
             <table className="dt">
               <thead>
@@ -159,7 +166,7 @@ export function LiveSignals() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.slice(0, 300).map((s, i) => (
+                {visible.map((s, i) => (
                   <tr
                     key={`${s.ts}-${s.strategy}-${s.token}-${i}`}
                     className={clsx("cursor-pointer", i === 0 && "animate-fade-in")}
@@ -186,6 +193,19 @@ export function LiveSignals() {
               </tbody>
             </table>
           </div>
+          {(hiddenCount > 0 || showAll) && (
+            <div className="flex items-center justify-center border-t border-border px-4 py-2.5 text-xs text-text-secondary">
+              <button
+                onClick={() => setShowAll((v) => !v)}
+                className="font-medium text-accent transition-colors hover:text-accent/80"
+              >
+                {showAll
+                  ? `Show latest ${DEFAULT_LIMIT}`
+                  : `Show more — ${hiddenCount} older signal${hiddenCount > 1 ? "s" : ""} hidden`}
+              </button>
+            </div>
+          )}
+          </>
         )}
       </Card>
     </div>

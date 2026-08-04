@@ -104,14 +104,25 @@ function NavItems({ onNavigate }: { onNavigate?: () => void }) {
           onClick={onNavigate}
           className={({ isActive }) =>
             clsx(
-              "rounded px-3 py-2 text-sm font-medium transition-colors",
+              "group relative flex items-center rounded px-3 py-2 text-sm font-medium transition-all duration-150",
               isActive
                 ? "bg-surface-2 text-text-primary"
-                : "text-text-secondary hover:bg-surface-2/60 hover:text-text-primary",
+                : "text-text-secondary hover:translate-x-0.5 hover:bg-surface-2/60 hover:text-text-primary",
             )
           }
         >
-          {n.label}
+          {({ isActive }) => (
+            <>
+              <span
+                className={clsx(
+                  "absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-accent transition-all duration-150",
+                  isActive ? "opacity-100" : "opacity-0 group-hover:opacity-40",
+                )}
+                aria-hidden="true"
+              />
+              {n.label}
+            </>
+          )}
         </NavLink>
       ))}
     </nav>

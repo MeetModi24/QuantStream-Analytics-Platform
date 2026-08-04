@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import clsx from "clsx";
@@ -62,10 +62,38 @@ export function Positions() {
 
       <Consensus rows={consensusQ.data ?? []} conflicts={conflicts} loading={consensusQ.isLoading} />
 
-      <Card title="Open positions" bodyClassName="p-0">
-        {open.length === 0 ? (
-          <EmptyState>No open positions — all strategies are flat.</EmptyState>
-        ) : (
+      <OpenPositions open={open} />
+    </div>
+  );
+}
+
+/** Open positions table, ranked by PnL magnitude (biggest movers first) and capped by
+ *  default so 100s of positions don't dump at once. */
+function OpenPositions({ open }: { open: PositionRow[] }) {
+  const [showAll, setShowAll] = useState(false);
+  const DEFAULT_LIMIT = 12;
+
+  const ranked = useMemo(
+    () => open.slice().sort((a, b) => Math.abs(b.unrealized_pnl) - Math.abs(a.unrealized_pnl)),
+    [open],
+  );
+  const visible = showAll ? ranked : ranked.slice(0, DEFAULT_LIMIT);
+  const hidden = ranked.length - visible.length;
+
+  return (
+    <Card
+      title="Open positions"
+      right={
+        <span className="text-xs text-text-muted">
+          {showAll ? `${ranked.length} shown` : `top ${Math.min(DEFAULT_LIMIT, ranked.length)} by |PnL|`}
+        </span>
+      }
+      bodyClassName="p-0 overflow-hidden"
+    >
+      {open.length === 0 ? (
+        <EmptyState>No open positions — all strategies are flat.</EmptyState>
+      ) : (
+        <>
           <div className="overflow-x-auto">
             <table className="dt">
               <thead>
@@ -80,18 +108,27 @@ export function Positions() {
                 </tr>
               </thead>
               <tbody>
-                {open
-                  .slice()
-                  .sort((a, b) => b.unrealized_pnl - a.unrealized_pnl)
-                  .map((p, i) => (
-                    <PositionRowView key={`${p.strategy}-${p.token}-${i}`} p={p} />
-                  ))}
+                {visible.map((p, i) => (
+                  <PositionRowView key={`${p.strategy}-${p.token}-${i}`} p={p} />
+                ))}
               </tbody>
             </table>
           </div>
-        )}
-      </Card>
-    </div>
+          {(hidden > 0 || showAll) && (
+            <div className="flex items-center justify-center border-t border-border px-4 py-2.5 text-xs text-text-secondary">
+              <button
+                onClick={() => setShowAll((v) => !v)}
+                className="font-medium text-accent transition-colors hover:text-accent/80"
+              >
+                {showAll
+                  ? `Show top ${DEFAULT_LIMIT}`
+                  : `Show all — ${hidden} more position${hidden > 1 ? "s" : ""}`}
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </Card>
   );
 }
 
@@ -125,7 +162,21 @@ function Consensus({
   loading: boolean;
 }) {
   const navigate = useNavigate();
-  const active = rows.filter((r) => r.longs.length + r.shorts.length > 0);
+  const [showAll, setShowAll] = useState(false);
+  const DEFAULT_LIMIT = 9;
+
+  // Conflicts are the interesting cases, so sort them to the front.
+  const active = useMemo(
+    () =>
+      rows
+        .filter((r) => r.longs.length + r.shorts.length > 0)
+        .sort(
+          (a, b) => Number(b.conflict) - Number(a.conflict) || a.token.localeCompare(b.token),
+        ),
+    [rows],
+  );
+  const visible = showAll ? active : active.slice(0, DEFAULT_LIMIT);
+  const hidden = active.length - visible.length;
 
   return (
     <Card
@@ -143,10 +194,9 @@ function Consensus({
       ) : active.length === 0 ? (
         <EmptyState>No directional positions across strategies yet.</EmptyState>
       ) : (
+        <>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {active
-            .slice()
-            .sort((a, b) => Number(b.conflict) - Number(a.conflict) || a.token.localeCompare(b.token))
+          {visible
             .map((c) => (
               <button
                 key={c.token}
@@ -167,6 +217,19 @@ function Consensus({
               </button>
             ))}
         </div>
+        {(hidden > 0 || showAll) && (
+          <div className="mt-3 flex justify-center text-xs">
+            <button
+              onClick={() => setShowAll((v) => !v)}
+              className="font-medium text-accent transition-colors hover:text-accent/80"
+            >
+              {showAll
+                ? `Show top ${DEFAULT_LIMIT}`
+                : `Show all — ${hidden} more token${hidden > 1 ? "s" : ""}`}
+            </button>
+          </div>
+        )}
+        </>
       )}
     </Card>
   );
