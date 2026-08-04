@@ -17,7 +17,7 @@ It is a **monitoring and analytics** system — it does not place real orders. T
 - **Five live quant strategies** — an OBI market-making signal, an Ornstein-Uhlenbeck mean-reversion, a dual-MA momentum crossover, a Kalman-filter adaptive trend estimator, and an order-flow-persistence (VPIN-style) signal — spanning three distinct theses (reversion, trend, flow).
 - **Position & PnL tracking** — notional-normalized fills, realized/unrealized PnL, win rate, and cross-strategy consensus/conflict detection per instrument.
 - **Live dashboard** — five pages (Market Overview, Token Detail, Strategy Performance, Positions & Exposure, Live Signals) backed by both REST polling and a live WebSocket feed.
-- **Measured end-to-end latency** — the dashboard instruments and displays live event→screen latency (order-book event to browser paint): **~20–25 ms p50, ~250 ms p99**, split into a pipeline leg (event→API) and a delivery leg (API→screen). Percentiles are computed on a throttled rolling window, not per message.
+- **Measured end-to-end latency** — the dashboard instruments and displays live event→screen latency (order-book event to browser): **~15–25 ms p50, ~25–50 ms p99**, split into a pipeline leg (event→API) and a delivery leg (API→screen). Percentiles are computed on a throttled rolling window, not per message. (The p99 dropped from ~250 ms once render throttling removed main-thread head-of-line blocking — see [`docs/concepts/06-latency-measurement.md`](docs/concepts/06-latency-measurement.md).)
 
 ---
 

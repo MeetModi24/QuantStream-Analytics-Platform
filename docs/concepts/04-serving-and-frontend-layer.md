@@ -262,8 +262,10 @@ code and here so the number is never over-claimed.
 The gaps are the ones named in [`03-hft-monitoring-at-scale.md`](03-hft-monitoring-at-scale.md),
 and this layer is deliberately shaped to accept them additively:
 
-- **Render throttling** — batch `liveStore` updates onto a `requestAnimationFrame` loop.
-  The central store is already the one place to do this.
+- **Render throttling** *(done)* — batch `liveStore` updates onto a `requestAnimationFrame`
+  loop. The central store is already the one place to do this. See
+  [`05-frontend-structure.md`](05-frontend-structure.md) (Part 4) and its measured latency
+  effect in [`06-latency-measurement.md`](06-latency-measurement.md).
 - **Table virtualization** — mount only the visible rows of the Market Overview.
 - **WebSocket subscription model** — let the client subscribe to only the visible tokens;
   the server already has the per-subscriber structure to filter on.

@@ -14,7 +14,7 @@
 // and schedules a SINGLE store update on the next animation frame. Result: N messages/sec
 // collapse into at most ~1 repaint per frame, regardless of feed rate. This decouples the
 // data-rate from the render-rate — the single most important frontend scaling move.
-// See docs/concepts/05-render-throttling.md.
+// See docs/concepts/05-frontend-structure.md (Part 4).
 import { create } from "zustand";
 import type { FeatureRow, LiveEnvelope, SignalRow } from "./types";
 
