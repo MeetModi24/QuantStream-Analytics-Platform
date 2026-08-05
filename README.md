@@ -18,6 +18,7 @@ It is a **monitoring and analytics** system — it does not place real orders. T
 - **Position & PnL tracking** — notional-normalized fills, realized/unrealized PnL, win rate, and cross-strategy consensus/conflict detection per instrument.
 - **Live dashboard** — five pages (Market Overview, Token Detail, Strategy Performance, Positions & Exposure, Live Signals) backed by both REST polling and a live WebSocket feed.
 - **Measured end-to-end latency** — the dashboard instruments and displays live event→screen latency (order-book event to browser): **~15–25 ms p50, ~25–50 ms p99**, split into a pipeline leg (event→API) and a delivery leg (API→screen). Percentiles are computed on a throttled rolling window, not per message. (The p99 dropped from ~250 ms once render throttling removed main-thread head-of-line blocking — see [`docs/concepts/06-latency-measurement.md`](docs/concepts/06-latency-measurement.md).)
+- **Load-tested, with the ceiling located** — a headless probe drives the pipeline from 100 to ~42,000 msg/sec: latency stays flat (p50 ~15 ms) and lossless to **~20k msg/sec**, degrades at a **~33k knee**, and collapses by 50k — a **consumer-bound** ceiling traced to single-partition Kafka + a single strategy-engine instance. Scaling and serialization (JSON→binary) work is thus *evidence-driven and deliberately deferred*, not speculative. See [`docs/benchmarks/`](docs/benchmarks/).
 
 ---
 
@@ -127,7 +128,9 @@ The strategy layer is an SPI (`Strategy` interface + factories auto-discovered a
 ├── dashboard-api/          # Python/FastAPI: REST over QuestDB + WebSocket feed
 ├── frontend/               # React + TypeScript + Vite dashboard
 ├── scripts/                # start / stop / status / clean lifecycle scripts
-├── docs/                   # Concepts, planning, and engineering notes
+│   └── loadtest/           # headless latency probe + load-sweep harness
+├── docs/                   # Concepts, planning, engineering notes, and benchmarks
+│   └── benchmarks/         # measured load/latency curve + analysis
 └── docker-compose.yml      # Kafka, Zookeeper, QuestDB, Kafka-UI
 ```
 
