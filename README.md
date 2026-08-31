@@ -29,7 +29,7 @@ It is a **monitoring and analytics** system — it does not place real orders. T
 │ Order-Book Generator │  Java · stochastic order-book simulation (GBM price,
 │ (Spring Boot)        │  mean-reverting imbalance, depth decay) · 1 snap/sec/token
 └──────────┬───────────┘
-           │ Kafka topic: order-book-snapshots
+           │ Kafka topic: order-book-data
            ▼
      ┌─────┴──────────────────────────┐
      ▼                                ▼
