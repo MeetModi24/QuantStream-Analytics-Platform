@@ -56,6 +56,41 @@ Buffer(Buffer&& other) noexcept {   // Buffer&& = rvalue reference: binds to tem
 
 `T&&` (double ampersand) is an **rvalue reference** — a reference that binds *only to rvalues*. It's how a function says "I know this argument is disposable, so I may gut it."
 
+### What actually happens byte-for-byte
+
+`data = other.data;` is a **shallow copy of the pointer** — and that's the point. Say `other.data` holds the address `0xfff00`:
+
+```
+before:  other.data ─▶ 0xfff00 ─▶ [ a million ints ]
+
+data = other.data;     // copy the ADDRESS 0xfff00 (one machine word), not the ints
+         this->data ─▶ 0xfff00 ─▶ [ the array ]   ← both now point at the SAME block
+         other.data ─▶ 0xfff00 ─┘
+
+other.data = nullptr;  // sever the source's claim
+         this->data ─▶ 0xfff00 ─▶ [ the array ]   ← sole owner
+         other.data ─▶ nullptr                    ← owns nothing
+```
+
+If we skipped the null-out, **both** destructors would `delete[] 0xfff00` → **double free** (Module 3). Nulling the source makes its later `delete[] nullptr` a safe no-op, so the block is freed exactly once. A move is therefore: **shallow-copy the handle, then invalidate the old handle.** Nothing in the heap relocates — the array stays at `0xfff00` the whole time; only *which pointer is allowed to free it* changes. The **ownership** moves; the **data** stays put.
+
+### This only works because the payload is on the heap
+
+Moving beats copying *only when the object owns its payload indirectly* — it holds a small pointer and the real data lives elsewhere (heap). If the data is stored **inline / by value** inside the object, there is **no pointer to steal**, so move degrades to a full copy:
+
+```cpp
+struct Inline { int data[100]; };   // 400 bytes stored RIGHT HERE, in the object
+// move ctor can only copy all 400 bytes element-by-element — nothing to reassign.
+```
+
+```
+Buffer (heap-owning):            Inline (by-value):
+  [ ptr ] ─▶ [ big buffer ]        [ 400 bytes, inline ]
+   ^ steal the ptr, O(1)           ^ no handle to steal → copy all of it, O(n)
+```
+
+So for plain scalar / fixed-array / inline data (the stuff that lives directly on the stack or directly inside a pooled object), **move == copy** — `std::move` on it is legal but buys nothing. This is exactly why `OrderPool` hands out *pointers/indices* into `storage`: an `Order` is all inline fields, so moving its bytes is no cheaper than copying — you get O(1) transfer only by moving a *pointer to* the order, reintroducing the indirection yourself. **Rule: move helps only for types that own a resource through a pointer (heap buffer, file handle, socket).**
+
 The compiler then chooses:
 
 ```cpp
@@ -77,6 +112,54 @@ Buffer b = std::move(a);  // force MOVE: b steals a's guts
 ```
 
 Read `std::move(a)` as: "I promise I'm finished with `a`'s contents — feel free to cannibalize."
+
+## Deep dive: what the compiler does on `return x;`
+
+Common confusion: "`x` is a named, addressable variable — an lvalue — so how does `return x;` move from it?" Both facts are true at once, because *value category* and *how the return value is constructed* are different questions.
+
+- **What category is the expression `x`?** → **lvalue**. Always. `&x` is legal; it names an object. `return` does not reclassify it.
+- **How is the returned object constructed?** → the return statement is *allowed to move from `x`* even though `x` is an lvalue, because `x` is a local about to be destroyed the instant the frame pops. Keeping it intact is pointless.
+
+The exact steps the compiler takes for `return x;` where `x` is a local of the return type:
+
+1. **Try NRVO (elision) first.** If it can, the compiler constructs `x` *directly in the caller's return slot* — `x` and the returned object are literally the same memory. No copy, no move, not even a move-constructor call. This is Named Return Value Optimization. Frequently `return x;` costs **nothing**.
+2. **If elision doesn't apply, try to move.** Overload resolution for building the return value treats `x` **as if it were an rvalue** — so it looks for a **move constructor** (binds to `T&&`) first. Found → the returned object steals `x`'s guts (pointer swap), `x` is left valid-but-empty and then destroyed.
+3. **Fall back to copy.** No usable move constructor (e.g. the type only has a copy ctor) → treat `x` as the lvalue it is and **copy**.
+
+So the order is **elide → move → copy**, best to worst. `x` stays an lvalue by category the whole time; step 2 is a special rule that *lets the return machinery move from a dying local*, often called **implicit move on return**.
+
+```cpp
+std::string make() {
+    std::string x = "hello";
+    return x;   // step 1 (NRVO) usually; else step 2 picks string's MOVE ctor.
+}               // NEVER a full deep copy in practice.
+```
+
+Corollary (already in Tradeoffs): don't write `return std::move(x);` for a plain local — it forces step 2 and *disables step 1*, so it's usually slower.
+
+## Two different "lvalue → rvalue" things — don't conflate them
+
+`x + 1` is an rvalue and `return x;` can move from `x`, but these ride on **different mechanisms**:
+
+**lvalue-to-rvalue conversion** — *reading the value out of an object.* When you use a variable's contents, the CPU reads the stored value into a register; that read yields a prvalue. `x` stays put and unchanged.
+
+```cpp
+int y = x + 1;
+// x undergoes lvalue→rvalue conversion: read x's value (say 10) into a register.
+// operator+ then MANUFACTURES a fresh temporary 11.
+// The expression (x + 1) is a prvalue because + produces a NEW value —
+// not because x was "turned into" an rvalue. x is untouched.
+```
+
+**Implicit move on return** — *which constructor builds the result.* Not a value read; it's overload resolution binding `x` to `T&&` so the move ctor wins, which **cannibalizes** `x`.
+
+| | `x + 1` (lvalue→rvalue conversion) | `return x;` (implicit move) |
+|---|---|---|
+| About | **reading** the value stored in `x` | **which constructor** builds the result |
+| Result | a fresh prvalue; `x` untouched | move ctor selected; `x` gutted (valid-but-empty) |
+| Applies to | any read (mainly scalars) | class types with a move constructor |
+
+Loosely both "involve an lvalue doing something rvalue-ish," but one is a **read that leaves the source intact**, the other lets the source be **plundered because it's about to die**.
 
 ## Tradeoffs / interview "why"
 

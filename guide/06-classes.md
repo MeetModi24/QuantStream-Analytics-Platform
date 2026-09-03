@@ -77,7 +77,7 @@ public:
 
 ## Destructors
 
-Runs automatically when the object dies (scope exit for stack objects, `delete` for heap objects). This is where RAII cleanup lives:
+`~ClassName()` — the cleanup half of an object's life (constructor acquires, destructor releases). No return type, no parameters, exactly **one** per class. You almost never call it explicitly; the compiler inserts the call. This is where RAII cleanup lives:
 
 ```cpp
 class FileHandle {
@@ -87,6 +87,71 @@ public:
     ~FileHandle() { if (f_) std::fclose(f_); }   // guaranteed cleanup
 };
 ```
+
+### When it runs (automatically, on every exit path)
+
+1. **Stack object leaves scope** — at the closing `}`. This *is* the "automatic cleanup at scope exit" from Module 1; the destructor is what runs.
+2. **Heap object is `delete`d** — `delete` runs the destructor *first*, then releases the raw memory.
+3. **The enclosing object is destroyed** — each member's destructor runs too (see order below).
+4. **Exception unwinding** — as an exception propagates, destructors of all locals between `throw` and `catch` fire. This is what makes RAII exception-safe (Module 14).
+
+The guarantee across all four: cleanup happens no matter *how* you leave — normal return, early return, or exception. You write the `delete`/`fclose` once; it can't be skipped.
+
+### Destruction order — reverse of construction
+
+1. **Locals** are destroyed in the **reverse** order they were created (it's a stack — LIFO): `a; b; c;` → destroyed `c, b, a`.
+2. **Members** are destroyed *after* the enclosing destructor's body runs, in **reverse declaration order**. You usually write nothing to clean them up — their own destructors run automatically. If every member is self-cleaning, your destructor body is often empty (or unneeded).
+3. **Base class** destructor runs *after* the derived one (Module 11): derived cleanup first, then base.
+
+### Virtual destructors (deleting through a base pointer)
+
+If you `delete` a derived object through a **base pointer** and the base destructor isn't `virtual`, only the base part is destroyed — the derived part leaks. UB.
+
+```cpp
+struct Base { virtual ~Base() = default; };  // virtual → correct polymorphic cleanup
+struct Derived : Base { std::vector<int> buf; };
+
+Base* p = new Derived;
+delete p;   // virtual:  ~Derived (frees buf) then ~Base.  ✅
+            // non-virtual: only ~Base runs → buf LEAKS.  ✗ UB
+```
+
+Rule: **any class meant to be inherited from and deleted polymorphically needs a `virtual` destructor.** (Full treatment in Module 11.)
+
+### "If I don't write one, won't it free the memory anyway?"
+
+Only if your members are **self-cleaning**. The compiler always generates a destructor when you don't write one — but the generated destructor does exactly one thing: **destroy each member.** And "destroy" means *call that member's destructor.* So the answer depends entirely on what the member is:
+
+```cpp
+class Leaks {
+    int* data_;                    // RAW pointer
+public:
+    Leaks(std::size_t n) : data_{new int[n]} {}
+    // no ~Leaks()
+};   // generated dtor destroys data_ → but destroying an int* does NOTHING to
+     // the heap array. delete[] is never called. LEAK.
+```
+
+A raw pointer is **trivial to destroy** — "destroying" it just discards the 8-byte pointer variable; the heap block it points at is untouched. The compiler can't know `data_` *owns* that block (it might be a borrowed/non-owning pointer, where freeing would be a bug), so it does nothing. **A class that directly owns a raw resource MUST hand-write its destructor.**
+
+Contrast with self-cleaning members — here you're right, no destructor needed:
+
+```cpp
+class Fine {
+    std::vector<int> data_;   // owns a heap array, but has its OWN destructor
+public:
+    Fine(std::size_t n) : data_(n) {}
+    // no ~Fine() needed
+};   // generated dtor destroys data_ → runs vector's destructor → delete[]. Freed. ✅
+```
+
+| Member | Compiler-generated dtor frees it? |
+|---|---|
+| Raw owning pointer (`int*` + `new`) | ❌ **No — leaks.** Write `delete[]` yourself. |
+| `std::vector` / `std::string` / `unique_ptr` | ✅ Yes — their own destructors run |
+| Scalar (`int`, `double`) | ✅ nothing to free anyway |
+
+The rule underneath: **destroying a member = calling that member's destructor.** Raw pointers have no meaningful one; RAII types do. This is the core reason to prefer `vector`/smart pointers over `new`/`delete` — with them, "no destructor needed" is genuinely safe; with raw pointers, a forgotten destructor is a silent leak. (And once a member manages the resource, you often need *no* destructor, copy ctor, or move ctor at all — the "Rule of Zero," Module 7.)
 
 ## Static members
 
@@ -116,3 +181,5 @@ Static methods have no `this` and can't touch non-static members.
 ## In the order book
 
 `Order`, `Limit` (a price level), and `Book` are classes. `Order` is nearly a POD struct (id, price, qty, side, links) for tight layout. `Book` enforces invariants (price-time priority) behind a clean public interface (`addLimitOrder`, `cancel`, `modify`). A static counter hands out order IDs.
+
+Destructor angle: `OrderPool`'s `storage` vector has one destructor call that frees the whole slab at shutdown — and during trading **no per-order destructors fire** (you recycle slots via the free-list, you don't destroy `Order`s). Fewer destructor calls on the hot path is part of why it's fast. The same logic is behind the move ctor's `other.data = nullptr` in Module 4: you empty the source precisely so *its* destructor frees nothing (no double free).

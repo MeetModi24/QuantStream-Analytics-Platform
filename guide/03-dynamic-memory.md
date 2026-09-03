@@ -52,6 +52,27 @@ auto p = std::make_unique<int>(5); // heap int owned by p
 
 This is **RAII** (Module 7): tie the heap object's lifetime to a *stack* object, so automatic stack cleanup handles the heap. Heap flexibility, stack safety — the most important idiom in modern C++.
 
+## "If RAII ties it to a scope, why not just use the stack?"
+
+Fair question — and mostly right. RAII ties lifetime to the **owner** object, not blindly to a scope, and the owner can be *moved out*. Prefer the stack by default; reach for the heap only when the stack **can't** do the job. Four reasons it can't:
+
+1. **Too big.** The stack is a fixed 1–8 MB block. `int big[10'000'000];` overflows it; `std::vector<int> big(10'000'000);` puts 40 MB on the heap with a small handle on the stack.
+2. **Size known only at runtime.** Stack frame sizes are fixed at *compile* time. `int arr[n];` (runtime `n`) isn't legal C++, requires compile time constant; anything that grows (`vector::push_back`, a filling map) *must* live on the heap.
+3. **Must outlive the creating scope.** You can't return a pointer to a stack local — it dies at the `}`. The heap lets an object be created here and handed back, via **move**:
+
+   ```cpp
+   std::unique_ptr<Order> makeOrder() {
+       auto o = std::make_unique<Order>(...);  // heap object
+       return o;    // ownership MOVES to caller; the Order does NOT die here
+   }
+   // Order* bad() { Order o; return &o; }  // ❌ dangling — stack o dies at }
+   ```
+
+   The handle dies at the `}`; the heap payload survives, now owned by the caller.
+4. **Shared or polymorphic.** Several owners sharing one object until the *last* is done (`shared_ptr`), or "some subclass of `Shape`, type unknown until runtime" (varying size → can't fit a fixed stack slot). The stack expresses neither.
+
+Mental model: **handle on the stack, payload on the heap.** Small handle → cheap to move, gets automatic cleanup; big/variable/long-lived/shared payload → lives on the heap where those are allowed. Use the stack directly when the object is small *and* compile-time-sized *and* scope-local (most locals). Otherwise: heap via an RAII owner.
+
 ## Why the heap is *slow* (the HFT-critical part)
 
 Stack alloc ≈ one register op. Heap `new` is dramatically more:
