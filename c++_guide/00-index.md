@@ -39,6 +39,11 @@ Go top-to-bottom. Each module: concept → snippet → tradeoffs → interview "
 
 19. [Order-book architecture: building it with everything above](19-order-book-project.md)
 
+## Part IV — The market & the system it lives in
+
+20. [Market microstructure & the HFT system pipeline (India-first)](20-market-microstructure-and-hft-systems.md)
+    - 20a. [The feed handler in C++ (deep dive)](20a-feed-handler.md)
+
 ## The mental through-line
 
 > Objects live somewhere (stack/heap) for some lifetime. You refer to them via pointers/references. Ownership decides who frees what (RAII/smart pointers). Templates give abstraction with zero runtime cost. The hardware (cache, atomics) decides how fast it actually runs. The order book is where all of this meets a real problem.
