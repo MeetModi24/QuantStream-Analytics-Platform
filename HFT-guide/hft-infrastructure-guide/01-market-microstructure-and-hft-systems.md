@@ -1,4 +1,4 @@
-# Module 20 — Market microstructure & the HFT system pipeline
+# Module 01 — Market microstructure & the HFT system pipeline
 
 Modules 1–19 taught you to *build fast things*. This module teaches you *what you're building and
 why* — the domain knowledge an HFT infrastructure interview probes once it's satisfied you can code.
@@ -6,7 +6,7 @@ Most candidates can write a fast order book but go vague the moment someone asks
 *come from*?" or "backtester vs simulator — what's the difference?". This module closes that gap.
 
 It's written India-first (NSE / BSE / prop-shop context) because that's the market you're
-interviewing into. Read it as the *systems map* that your Module 19 order book plugs into: the order
+interviewing into. Read it as the *systems map* that your Module 03 order book plugs into: the order
 book is one box in a much larger pipeline, and this module draws the whole pipeline.
 
 > This is **Part 1 — the conceptual map**. Subsequent parts (planned) will expand each box into its
@@ -113,7 +113,7 @@ what do you do?" → buffer, recover via the retransmit channel or a snapshot re
 **stale** until resynced (don't trade on a book you can't trust).
 
 **Order book builder.** Consumes TBT and maintains the full LOB in memory: price levels + per-level
-FIFO order queues (price–time priority). *This is your Module 19 project.* The classic data-structure
+FIFO order queues (price–time priority). *This is your Module 03 project.* The classic data-structure
 question — array/vector indexed by price ticks for O(1) level access, plus intrusive linked lists of
 orders per level, plus an object pool so the hot path never allocates. Connect it explicitly in
 interviews: "the thing I built is exactly the book builder in this pipeline."
@@ -226,7 +226,7 @@ someone who understands *the business* — not just the data structures.
 ## The mental through-line
 
 > Data leaves the matching engine as a fast lossy multicast feed. A feed handler turns bytes into a
-> trustworthy stream; the book builder (Module 19) turns that stream into a live order book; the
+> trustworthy stream; the book builder (Module 03) turns that stream into a live order book; the
 > strategy turns the book into intent; risk gates it; the OMS turns intent into orders and tracks
 > their fate. Everything offline — recorder, backtester, simulator, TCA — exists so you can develop
 > and validate that hot path *without lighting money on fire.* The C++ you learned is how each box
@@ -234,12 +234,22 @@ someone who understands *the business* — not just the data structures.
 
 ---
 
-## What's next (planned expansions)
+## What's next (the rest of Part B)
 
-- **20a — The feed handler in C++**: multicast decode, sequence-gap state machine, kernel bypass, the
-  normalize step, marking the book stale.
-- **20b — The matching-engine simulator**: reusing the Module 19 engine as a sim exchange; latency
-  injection; market-replay vs synthetic flow.
-- **20c — The backtester & fill model**: queue-position modelling, market impact, look-ahead bias.
-- **20d — Options pricing / greeks engine**: vol surface, real-time greeks, the extra box for
-  index-option market making.
+The modules follow the data's own journey through the pipeline — feed in, book built, orders out,
+then the offline tooling that lets you develop safely:
+
+- **02 — The feed handler in C++** *(written)*: multicast decode, sequence-gap state machine, kernel
+  bypass, the normalize step, marking the book stale.
+- **03 — Order-book architecture** *(written)*: the limit order book & matching engine — your
+  flagship portfolio project.
+- **04 — The OMS / order gateway** *(planned)*: the exchange session, the order state machine, fills
+  reconciliation, position keeping, recovery after disconnect.
+- **05 — The backtester & fill model** *(planned)*: queue-position modelling, market impact,
+  look-ahead bias.
+- **06 — The matching-engine simulator** *(planned)*: reusing the Module 03 engine as a sim exchange;
+  latency injection; market-replay vs synthetic flow.
+- **07 — Options pricing / greeks engine** *(planned)*: vol surface, real-time greeks, the extra box
+  for index-option market making.
+
+*(This sequence may still shift as modules are written.)*

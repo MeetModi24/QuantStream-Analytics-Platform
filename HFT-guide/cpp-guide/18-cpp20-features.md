@@ -438,5 +438,5 @@ That turns the "C++20" on your resume from a flag into a claim with a mechanism 
   what each replaced, and where (including knowing when *not* to use ranges/coroutines on the hot
   path).
 
-**Next:** [19 — Order-book architecture: building it with everything above](19-order-book-project.md)
+**Next:** Part B — [HFT infrastructure, Module 01: Market microstructure & the system pipeline](../hft-infrastructure-guide/01-market-microstructure-and-hft-systems.md) — where all this C++ gets used.
 — the capstone where every module becomes a design decision.

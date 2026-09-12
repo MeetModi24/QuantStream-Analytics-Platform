@@ -1,4 +1,4 @@
-# Module 19 — Order-book architecture: building it with everything above
+# Module 03 — Order-book architecture: building it with everything above
 
 This is where the language becomes a system. Every module so far taught a tool; this module spends
 them. We build the **Limit Order Book & Matching Engine** in two phases — a **correct naive version
@@ -522,5 +522,5 @@ portfolio.
 - The measured before/after story, the profiling flame graph, and the "why" for each choice are the
   interview — build them deliberately.
 
-**Next:** You've reached the end of the guide. Return to the [index](00-index.md) to review, or start
+**Next:** You've reached the end of the current guide. Return to the [index](../00-index.md) to review, or start
 building — types + pool + tests first.

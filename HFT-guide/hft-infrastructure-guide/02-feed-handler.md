@@ -1,6 +1,6 @@
-# Module 20a — The feed handler in C++ (deep dive)
+# Module 02 — The feed handler in C++ (deep dive)
 
-Module 20 drew the pipeline and gave the feed handler one paragraph. This module spends a whole
+Module 01 drew the pipeline and gave the feed handler one paragraph. This module spends a whole
 chapter on it, because in an HFT infrastructure interview the feed handler is the box you'll be
 grilled on hardest — it's where *networking, binary parsing, lock-free data structures, and hard
 correctness under packet loss* all meet. It's also the box most beginners hand-wave ("I read the
@@ -597,6 +597,6 @@ Two design points worth stating aloud:
 - **Module 15/16** — the aligned structs, false-sharing avoidance, and the lock-free SPSC ring are
   exactly those tools.
 - **Module 18** — `std::byteswap`, `std::span`, `std::endian` are the parsing primitives used above.
-- **Module 19** — the "hand off" of §8 is precisely the input to your order-book builder.
-- **Next: 20b** — the matching-engine simulator, which *produces* a feed like this so you can test the
-  handler end-to-end without the live exchange.
+- **Module 03** — the "hand off" of §8 is precisely the input to your order-book builder.
+- **Next: Module 03** — the order-book builder, which consumes exactly the normalized, in-order
+  stream this handler produces and turns it into a live limit order book.
