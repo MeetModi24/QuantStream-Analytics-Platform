@@ -473,6 +473,6 @@ array+bitset: −Y ns; ...") is far more convincing than one big rewrite.
 - The portfolio value is the **build → measure → diagnose → optimize** arc, told with per-change
   before/after numbers.
 
-**Next:** You've reached the end of the currently-written guide (Modules 04 OMS, 05 backtester, 06
-simulator, 07 greeks are planned). Return to the [index](../00-index.md), or start the rung-3 upgrade —
-object pool first.
+**Next:** Module 04 — [the strategy engine](04-strategy-engine.md): the brain that reads this book and
+decides what to trade (OMS, recorder, backtester, and simulator are planned after it). Return to the
+[index](../00-index.md), or start the rung-3 upgrade — object pool first.

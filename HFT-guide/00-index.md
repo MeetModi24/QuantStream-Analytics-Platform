@@ -54,16 +54,18 @@ infrastructure modules add the domain context and the systems design those C++ s
 ## Part B — HFT infrastructure (`hft-infrastructure-guide/`)
 
 Its own numbering, starting at 01. The modules follow the data's journey through the pipeline: the
-big picture first, then the feed handler that fills the book, then the book itself, then (planned) the
-OMS, backtester, and simulator.
+big picture first, then the feed handler that fills the book, then the book itself, then the strategy
+engine that decides what to trade, then (planned) the OMS, recorder, backtester, and simulator.
 
 1. [Market microstructure & the HFT system pipeline (India-first)](hft-infrastructure-guide/01-market-microstructure-and-hft-systems.md)
 2. [The feed handler in C++ (deep dive)](hft-infrastructure-guide/02-feed-handler.md)
 3. [Order-book architecture: building it with everything above](hft-infrastructure-guide/03-order-book-project.md)
-4. The OMS / order gateway *(planned)*
-5. The backtester & fill model *(planned)*
-6. The matching-engine simulator *(planned)*
-7. Options pricing / greeks engine *(planned)*
+4. [The strategy engine: knowhow + design problems (LLD & HLD)](hft-infrastructure-guide/04-strategy-engine.md)
+5. The OMS / order gateway *(planned)*
+6. The market-data recorder *(planned)*
+7. The backtester & fill model *(planned)*
+8. The matching-engine simulator *(planned)*
+9. Options pricing / greeks engine *(planned)*
 
 ---
 

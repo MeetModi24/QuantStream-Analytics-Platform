@@ -243,13 +243,17 @@ then the offline tooling that lets you develop safely:
   bypass, the normalize step, marking the book stale.
 - **03 — Order-book architecture** *(written)*: the limit order book & matching engine — your
   flagship portfolio project.
-- **04 — The OMS / order gateway** *(planned)*: the exchange session, the order state machine, fills
+- **04 — The strategy engine** *(written)*: the decision brain — event dispatch, incremental signals,
+  the market-making quoter, backtest/live parity, worked LLD & HLD design problems.
+- **05 — The OMS / order gateway** *(planned)*: the exchange session, the order state machine, fills
   reconciliation, position keeping, recovery after disconnect.
-- **05 — The backtester & fill model** *(planned)*: queue-position modelling, market impact,
+- **06 — The market-data recorder** *(planned)*: capturing the raw feed with hardware timestamps for
+  deterministic replay.
+- **07 — The backtester & fill model** *(planned)*: queue-position modelling, market impact,
   look-ahead bias.
-- **06 — The matching-engine simulator** *(planned)*: reusing the Module 03 engine as a sim exchange;
+- **08 — The matching-engine simulator** *(planned)*: reusing the Module 03 engine as a sim exchange;
   latency injection; market-replay vs synthetic flow.
-- **07 — Options pricing / greeks engine** *(planned)*: vol surface, real-time greeks, the extra box
+- **09 — Options pricing / greeks engine** *(planned)*: vol surface, real-time greeks, the extra box
   for index-option market making.
 
 *(This sequence may still shift as modules are written.)*
