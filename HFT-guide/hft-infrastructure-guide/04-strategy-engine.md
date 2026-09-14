@@ -526,5 +526,6 @@ risk-*aware*; risk is the backstop.
   (OTR, latency, determinism, priority), then earn the optimized version.** The reasoning path is the
   interview.
 
-**Next:** Module 05 — the OMS / order gateway (the box the strategy's intents flow into: exchange
-session, order state machine, fills reconciliation, recovery). Return to the [index](../00-index.md).
+**Next:** Module 05 — [the OMS / order gateway](05-oms-order-gateway.md): the box the strategy's
+intents flow into — exchange session, order state machine, gateway routing, telemetry, and recovery.
+Return to the [index](../00-index.md).

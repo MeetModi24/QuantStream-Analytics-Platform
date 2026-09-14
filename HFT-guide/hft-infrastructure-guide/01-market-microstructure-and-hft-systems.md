@@ -245,8 +245,8 @@ then the offline tooling that lets you develop safely:
   flagship portfolio project.
 - **04 — The strategy engine** *(written)*: the decision brain — event dispatch, incremental signals,
   the market-making quoter, backtest/live parity, worked LLD & HLD design problems.
-- **05 — The OMS / order gateway** *(planned)*: the exchange session, the order state machine, fills
-  reconciliation, position keeping, recovery after disconnect.
+- **05 — The OMS / order gateway** *(written)*: the exchange session, the order state machine, fills
+  reconciliation, position keeping, gateway routing/throttling, telemetry, recovery after disconnect.
 - **06 — The market-data recorder** *(planned)*: capturing the raw feed with hardware timestamps for
   deterministic replay.
 - **07 — The backtester & fill model** *(planned)*: queue-position modelling, market impact,
