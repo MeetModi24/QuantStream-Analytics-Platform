@@ -393,9 +393,415 @@ you even need an *exact* window (EWMA) — that judgment is the interview.
 > (recorded market data → simulated fills). Cover event routing, threading, determinism,
 > backtest/live parity, order/fill attribution, and where risk sits.
 
-## 4.2 How to think about it
+## 4.2 Building the engine from the ground up (25 points)
 
-Drive it top-down; each decision below is a talking point.
+The words *single-threaded*, *lock-free*, *sharding*, *event queue* get thrown around together and
+blur into mush. The cure is to build the system **from the ground up** and, for every term, say
+**which component it belongs to and why**. Five groups, five points each — what each thing *does* and
+*how it's implemented*.
+
+### A. Overall structure — what exists?
+
+**1. Strategy.** A strategy is simply the trading logic.
+
+```cpp
+class Strategy {
+public:
+    void onBookUpdate(const BookUpdate& e);
+    void onTrade(const Trade& e);
+    void onFill(const Fill& e);
+};
+```
+
+For example:
+
+```text
+AAPL price rises
+       ↓
+MomentumStrategy
+       ↓
+BUY AAPL
+```
+
+*Implementation:* each strategy object maintains its own state:
+
+```cpp
+class MomentumStrategy {
+    double movingAverage;
+    int position;
+public:
+    void onBookUpdate(const BookUpdate& e);
+};
+```
+
+There is normally **one strategy instance per strategy configuration**, not one thread per strategy.
+
+**2. Instrument.** An instrument is something being traded (AAPL, MSFT, GOOG, NIFTY, BTC, …). The
+engine needs to know *which strategies care about which instrument*:
+
+```cpp
+AAPL → [Strategy1, Strategy5, Strategy8]
+MSFT → [Strategy2, Strategy5]
+```
+
+*Implementation:* an array/vector indexed by an internal `InstrumentId`, rather than repeated
+expensive map lookups (Module 12 on the `unordered_map` vs direct-index cost).
+
+**3. Event.** Everything that happens is represented as an event: `BookUpdate`, `Trade`, `OrderAck`,
+`Fill`, `CancelAck`, `Timer`.
+
+```cpp
+struct BookUpdate {
+    Timestamp    timestamp;
+    InstrumentId instrument;
+    double bid;
+    double ask;
+};
+```
+
+Instead of the strategy directly asking the exchange `exchange.getCurrentPrice()`, the engine says
+`strategy.onBookUpdate(event)`. This is what makes the system **event-driven**.
+
+**4. OrderRouter.** The strategy doesn't talk to the exchange directly — it talks to an `OrderRouter`
+(`router.send(order); router.cancel(orderId);`). Why? So the *same* strategy code runs live and in
+backtest (this is §1.3's interface):
+
+```text
+Strategy
+   ↓
+OrderRouter
+   ↓
+       ┌─────────────┐
+      LIVE       BACKTEST
+       │             │
+      Risk       Simulator
+       │
+      OMS
+       │
+   Exchange
+```
+
+**5. Strategy engine.** The engine connects everything and acts as the **traffic controller**:
+
+```text
+Event → Event Queue → Dispatcher → Strategy → OrderRouter → Risk / Simulator → Fill → Event Queue → Strategy
+```
+
+It doesn't decide *what* to trade (the strategy does). It decides: *which strategy receives this
+event, when, and where its resulting order goes.*
+
+### B. Event processing — how does an event move?
+
+**6. Event source.** Two possible sources — and this is the first parity point (everything after can
+be identical):
+
+```text
+LIVE:      Exchange feed → Feed Handler → Event
+BACKTEST:  Recorded market-data file → Replay Engine → Event
+
+LIVE ────────┐
+             ↓
+          Event
+             ↑
+BACKTEST ────┘
+```
+
+**7. Event queue.** Temporarily holds events waiting to be processed.
+
+```text
+Feed → [E1][E2][E3][E4] → Engine
+                  ↑
+                Queue
+```
+
+*Implementation:* in HFT, typically a **preallocated ring buffer**, so pushing an event never calls
+`new Event` on the hot path:
+
+```cpp
+Event  buffer[N];
+size_t head = 0;  // next event to consume
+size_t tail = 0;  // next slot to write
+```
+
+**8. Single-threaded queue.** An important distinction: a **shard's internal event processing is
+single-threaded**.
+
+```text
+Core 3
+  └── Shard 7
+       ├── Event Queue
+       ├── Strategy A
+       ├── Strategy B
+       └── Strategy C
+```
+
+One thread owns all of this, so `head++` / `tail++` can be **ordinary variables — no mutex, no atomic
+required** for that internal queue, because only one thread modifies them. (Contrast Module 16: atomics
+are for the *cross-thread* queues in point 23.)
+
+**9. Dispatcher.** Takes an event off the queue and decides who receives it:
+
+```cpp
+for (Strategy* s : subscribers[AAPL]) {
+    s->onBookUpdate(event);
+}
+```
+
+```text
+AAPL event
+    ↓
+Dispatcher
+    ├── Strategy A
+    └── Strategy C          (Strategy B doesn't subscribe → doesn't receive it)
+```
+
+**10. Sequential strategy execution.** Inside one shard, strategies run one after another, *not* on
+three threads:
+
+```text
+Event → Strategy A → Strategy B → Strategy C → next Event
+```
+
+This gives a **well-defined order of execution**, and therefore **determinism**.
+
+### C. Sharding and threading — where do threads actually exist?
+
+**11. One shard = one thread/core.** With 1,000 instruments, 100 strategies, 8 cores — don't create
+100 strategy threads. Instead:
+
+```text
+Shard 0 → Thread 0 → instruments 0–124
+Shard 1 → Thread 1 → instruments 125–249
+Shard 2 → Thread 2 → instruments 250–374
+...
+```
+
+Each shard owns its instruments and the strategies on them.
+
+**12. Why shard?** One core can't process everything forever. Sharding is where **parallelism** comes
+from:
+
+```text
+             Strategy Engine
+       ┌────────────┼────────────┐
+    Shard 0      Shard 1      Shard 2
+    Core 0       Core 1       Core 2
+```
+
+**13. What "single-threaded" actually means.** *Not* that the whole engine has one thread. It means
+**each shard has one thread processing its events sequentially**:
+
+```text
+Shard 0 → one thread   Shard 1 → one thread   Shard 2 → one thread
+```
+
+Across shards they run simultaneously; within a shard everything is sequential.
+
+**14. Why no locks inside a shard.** Only Thread 0 touches Shard 0's objects, so Strategy A can just do
+`position += fill.quantity;` — no other thread modifies `position`, so no `std::mutex`, no
+`std::atomic<int>`. This is one of the biggest performance wins (and why Module 16's machinery is
+*not* needed here).
+
+**15. Multi-instrument strategy.** A `PairsStrategy` on AAPL + MSFT means **AAPL and MSFT must be in
+the same shard**:
+
+```text
+Shard 2
+ ├── AAPL
+ ├── MSFT
+ └── PairsStrategy
+```
+
+Otherwise two cores would share strategy state and need synchronization. So sharding has a rule:
+**instruments a strategy jointly depends on must be co-located.**
+
+### D. Orders, risk, and fills
+
+**16. Strategy generates an order.** `router.send(BUY, AAPL, 100);` — it never sends to the exchange
+directly. `OrderRouter` is the abstraction boundary.
+
+**17. Client Order ID.** The engine/router generates a `ClientOrderId` and records ownership:
+
+```cpp
+orderOwner[12345] = strategyA;   // 12345→A, 12346→B, 12347→A, …
+```
+
+This is how the engine knows who owns an order. (This is exactly the OMS's ClOrdID from Module 05 §5.3
+— the engine mints it, the OMS carries it to the wire.)
+
+**18. Risk gate.** The order passes through risk before the OMS:
+
+```text
+Strategy → OrderRouter → RISK → OMS → Exchange
+```
+
+Risk checks max position, max order quantity, max notional, rate limit, kill switch. A `BUY 10M shares`
+against a `max order = 100,000` is **rejected**. The key point: **the strategy cannot bypass risk.**
+
+**19. Live vs backtest router.** Now the abstraction pays off — same `router.send(...)`, different
+implementation underneath:
+
+```text
+              SAME STRATEGY
+                    ▼
+              OrderRouter
+               /        \
+            LIVE       BACKTEST
+             ↓             ↓
+           Risk       Simulator
+             ↓
+            OMS
+             ↓
+          Exchange
+```
+
+**20. Fill comes back.** The exchange reports `ClientOrderId = 12345, Filled = 50`; the engine routes
+it to the owner:
+
+```cpp
+Strategy* s = orderOwner[12345];
+s->onFill(fill);
+```
+
+```text
+Exchange → Fill(12345, 50) → orderOwner[12345] → Strategy A → onFill()
+```
+
+Strategy B never sees Strategy A's fill.
+
+### E. Determinism, lock-free, and the complete flow
+
+**21. What exactly is deterministic?** Given ordered input `E1 → E2 → E3 → E4`, the engine always
+processes them in that order, and if E1 makes Strategy A BUY, that decision happens at the same point
+in every replay:
+
+```text
+Same ordered events → Same strategy state → Same decisions → Same orders
+```
+
+**22. How to enforce deterministic ordering.** Give events an ordering key and sort by it:
+
+```cpp
+struct Event { Timestamp timestamp; uint64_t sequenceNumber; };
+// order by (timestamp, sequenceNumber)
+```
+
+```text
+09:30:00.001 seq 100
+09:30:00.001 seq 101      ← same timestamp, sequence breaks the tie
+09:30:00.002 seq 102
+```
+
+Also avoid decisions based on `unordered_map` iteration order — it isn't a deterministic execution
+order.
+
+**23. Where "lock-free" comes in.** Correction to a common confusion: **the whole engine is not
+necessarily lock-free.** A single-threaded shard needs no locks *at all*. Lock-free structures matter
+only when **threads communicate across boundaries**:
+
+```text
+Hot strategy thread → Lock-free queue → Background logging thread
+Feed thread → SPSC lock-free queue → Strategy shard thread
+```
+
+So **single-threaded ≠ lock-free** — related, but they solve different problems. (The lock-free rings
+here are Module 16; the shard interior is not.)
+
+**24. Slow work goes off the hot path.** Don't do `recalibrate_model();  // 50 ms` inside
+`onBookUpdate()` — it blocks the entire shard. Push it to a background thread over a lock-free queue:
+
+```text
+Strategy thread
+      ├── normal trading logic
+      └── lock-free queue → Background thread recalibrates model
+```
+
+The result is communicated back in a controlled/deterministic way if it affects trading. The hot path
+stays: **receive event → update state → make decision → send order.**
+
+**25. Put it all together.**
+
+```text
+                 LIVE FEED
+                    ▼
+             ┌─────────────┐
+             │ Event Queue │
+             └──────┬──────┘
+                    ▼
+               Dispatcher
+          ┌─────────┴─────────┐
+          ▼                   ▼
+       Shard 0             Shard 1
+       Core 0              Core 1
+     ┌────┼────┐         ┌────┼────┐
+     ▼    ▼    ▼         ▼    ▼    ▼
+    S1    S2   S3        S4   S5   S6
+     └────┬────┘              │
+          ▼                   ▼
+      OrderRouter         OrderRouter
+          ▼                   ▼
+         Risk                 Risk
+          ▼
+         OMS
+          ▼
+       Exchange
+          ▼
+        Fill
+          ▼
+      Event Queue
+          ▼
+      Dispatcher
+          ▼
+   orderId → owning strategy
+          ▼
+       onFill()
+```
+
+And in **backtest**, only the ends change:
+
+```text
+LIVE                         BACKTEST
+Live Feed                    Recorded Data
+   ↓                              ↓
+Event Queue                  Event Queue
+   ↓                              ↓
+Dispatcher                   Dispatcher
+   ↓                              ↓
+Strategies                   Strategies
+   ↓                              ↓
+OrderRouter                  OrderRouter
+   ↓                              ↓
+Risk → OMS → Exchange        Fill Simulator → Fill
+```
+
+**The five words to keep straight:**
+
+| Concept | What it is for |
+|---|---|
+| **Strategy** | Trading logic |
+| **Event Queue** | Holds events waiting to be processed |
+| **Dispatcher** | Sends each event to the correct strategies |
+| **Shard** | Group of instruments + strategies processed by one core/thread |
+| **OrderRouter** | Hides live vs backtest order execution |
+
+And the threading picture is simply:
+
+```text
+             MANY SHARDS
+      ┌──────────┼──────────┐
+   Thread 1   Thread 2   Thread 3
+   Shard 1    Shard 2    Shard 3
+  sequential sequential sequential
+   events     events     events
+```
+
+Don't think "one thread per strategy." Think **one thread per shard; a shard owns instruments and
+their strategies; events flow sequentially through that shard.**
+
+## 4.3 The same reasoning, compressed (for the interview)
+
+The 25 points above are the build; here's the tight version to *say out loud*. Drive it top-down; each
+is a talking point.
 
 **(1) The abstraction boundary (the key insight).** A strategy depends on *two* interfaces only: the
 events it receives (`Strategy` callbacks) and the `OrderRouter` it acts through (§1.3). Everything
@@ -446,7 +852,7 @@ handlers) and pushing heavy/slow work (recalibration, logging) to an off-hot-pat
 communicates via a lock-free queue (Module 16). Don't try to preempt strategies mid-event — that
 breaks determinism.
 
-## 4.3 Tradeoffs to name
+## 4.4 Tradeoffs to name
 
 - **Determinism vs isolation.** Single-threaded gives perfect determinism and no locks, but no
   fault-isolation between co-located strategies. Accept it and bound per-event work; isolate blast
