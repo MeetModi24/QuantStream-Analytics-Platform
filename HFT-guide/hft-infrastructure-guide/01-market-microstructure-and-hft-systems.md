@@ -247,13 +247,13 @@ then the offline tooling that lets you develop safely:
   the market-making quoter, backtest/live parity, worked LLD & HLD design problems.
 - **05 — The OMS / order gateway** *(written)*: the exchange session, the order state machine, fills
   reconciliation, position keeping, gateway routing/throttling, telemetry, recovery after disconnect.
-- **06 — The market-data recorder** *(planned)*: capturing the raw feed with hardware timestamps for
-  deterministic replay.
-- **07 — The backtester & fill model** *(planned)*: queue-position modelling, market impact,
-  look-ahead bias.
-- **08 — The matching-engine simulator** *(planned)*: reusing the Module 03 engine as a sim exchange;
-  latency injection; market-replay vs synthetic flow.
-- **09 — Options pricing / greeks engine** *(planned)*: vol surface, real-time greeks, the extra box
+- **06 — The backtester & the exchange simulator** *(written)*: deterministic event-time replay,
+  queue-position fill models, the simulated exchange behind the gateway protocol (reusing the Module 03
+  engine), latency modelling, and fault injection to validate the OMS.
+- **07 — The five systems at a glance** *(written)*: a capstone cheat-sheet — functional/non-functional
+  requirements, key challenges, implementation flow, and the concrete HFT techniques for each of the
+  five components above.
+- **08 — Options pricing / greeks engine** *(planned)*: vol surface, real-time greeks, the extra box
   for index-option market making.
 
 *(This sequence may still shift as modules are written.)*

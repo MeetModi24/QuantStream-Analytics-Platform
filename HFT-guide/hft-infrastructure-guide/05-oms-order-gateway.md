@@ -633,6 +633,140 @@ don't.)
 | **Failover aggressiveness** | Fast failover risks flapping/duplicate orders; slow failover risks dead time. Gate on missed heartbeats + a hysteresis. |
 | **One instrument, one gateway** | Preserves ordering; caps a single instrument's throughput to one session. Fine for equities/options; revisit only for extreme cases. |
 
+### 3.6 The complete lifecycle of one order (memorize this)
+
+Everything in Problems 1–3 comes together in the journey of a *single* order from a strategy's decision
+to its terminal state. This is the sequence to have burned into memory:
+
+```text
+                    MARKET DATA
+                        ↓
+                    Strategy                         (Module 04 — decides)
+                        ↓
+                 "BUY AAPL 100"
+                        ↓
+                  Command Queue                      (lock-free MPSC, §3.4a / M16)
+                        ↓
+                Gateway Manager
+                        ↓
+                route[AAPL]                           (direct-index routing, §3.4b)
+                        ↓
+                Gateway Queue
+                        ↓
+                Gateway Thread                        (single writer, owns everything below)
+                        ↓
+                  Pre-trade Risk                      (§3.intro / §7 — unbypassable)
+                        ↓
+                   OrderStore                         (Problem 1 — pool + generational handle)
+                        ↓
+               state = PendingNew
+                        ↓
+                 Token available?                     (token bucket, §3.4c — no sleep)
+                   /          \
+                 yes           no
+                  ↓             ↓
+             send exchange    queue  (back-pressure, local to this gateway)
+                  ↓
+               Exchange                               (native/FIX encode, Problem 2)
+                  ↓
+                 ACK
+                  ↓
+            state = Working
+                  ↓
+                FILL 40
+                  ↓
+          cum=40, leaves=60                            (exchange-as-truth, idempotent, Problem 1)
+                  ↓
+              Strategy
+                  ↓
+           "Cancel order"
+                  ↓
+             Command Queue
+                  ↓
+            Gateway Thread
+                  ↓
+        state = PendingCancel
+                  ↓
+            send CANCEL
+                  ↓
+               Exchange
+               /       \
+         Cancel wins   Fill wins                       (the cancel/fill race, §4 / Problem 1)
+             ↓             ↓
+         Cancelled       Filled
+```
+
+Notice how every hop maps to a component you designed: the two lock-free queue boundaries (command
+queue in, gateway queue), the single-writer gateway thread that serializes risk → store → send, and
+the terminal fork that *is* the cancel/fill race resolving itself.
+
+### 3.7 The threading picture (the most important diagram)
+
+Where do threads actually live, and why is almost nothing locked?
+
+```text
+       CORE 0             CORE 1             CORE 2
+         │                  │                  │
+        S1                 S2                 S3        (strategies — one per core, Module 04)
+         │                  │                  │
+         └────────────┬─────┴───────┬──────────┘
+                      │             │
+                      ▼             ▼
+                  MPSC Queue 0   MPSC Queue 1           (lock-free hand-off — M16)
+                      │             │
+                      ▼             ▼
+                 GW Thread 0    GW Thread 1             (one single writer per session)
+                      │             │
+                 owns session 0  owns session 1
+                      │             │
+                      ▼             ▼
+                  Exchange A      Exchange B
+```
+
+Inside one gateway thread, that single writer owns *all* the mutable state:
+
+```text
+                 GW Thread 0
+                     │
+       ┌─────────────┼──────────────┐
+       ↓             ↓              ↓
+    socket       OrderStore     TokenBucket
+       │             │
+       │             ↓
+       │          Order 1
+       │          Order 2
+       │          Order 3
+       ↓
+    Exchange
+```
+
+Because **only GW Thread 0 ever touches those things**:
+
+```text
+OrderStore      → no mutex
+TokenBucket     → no mutex
+Sequence number → no mutex
+Socket          → no mutex
+```
+
+**The synchronization is primarily at the queue boundary** (the MPSC rings) — nowhere else. This is
+the whole payoff of the single-writer-per-session principle (§7): concurrency comes from *sharding
+sessions across cores*, and the only place two threads meet is the lock-free queue between a strategy
+core and a gateway thread. (Compare the strategy engine's identical reasoning in Module 04 §4.2, points
+8/14/23: single-threaded ≠ lock-free; lock-free only at the boundaries.)
+
+### 3.8 The one sentence that ties Problem 3 together
+
+If an interviewer asks *"how does the system work?"*, this is the answer to deliver:
+
+> "Strategies run independently on different cores and publish order commands to lock-free queues. The
+> Gateway Manager routes each command to the gateway responsible for that instrument/segment. Each
+> gateway has a **single writer thread** that owns its socket, sequence numbers, rate limiter, and order
+> state; it processes commands sequentially, performs risk checks, updates the OrderStore, and sends to
+> the exchange. Independent queues and gateway threads prevent one throttled or failed session from
+> blocking another, while failover redirects new orders and reconciliation resolves orders whose outcome
+> is unknown."
+
 ## Problem 4 (HLD) — the real-time telemetry & persistence pipeline
 
 ### 4.1 Statement
@@ -876,6 +1010,7 @@ market data. I normalize both behind one internal order model, exactly as I norm
 
 ---
 
-**Next:** Module 06 — the market-data recorder (capturing the raw feed with hardware timestamps for
-deterministic replay), which — with the OMS's append-only event log — is what makes the backtester
-(Module 07) trustworthy. Return to the [index](../00-index.md).
+**Next:** Module 06 — [the backtester & the exchange simulator](06-backtester-and-simulator.md): the
+OMS's append-only event log and recorded market data are what make deterministic replay trustworthy,
+and the simulator plugs in behind this module's gateway protocol to validate the whole order lifecycle.
+Return to the [index](../00-index.md).
