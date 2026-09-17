@@ -798,6 +798,220 @@ And the threading picture is simply:
 Don't think "one thread per strategy." Think **one thread per shard; a shard owns instruments and
 their strategies; events flow sequentially through that shard.**
 
+### 4.2.1 A minimal runnable version
+
+The 25 points describe the shape; here is a small, compilable program that makes three of the load-bearing
+ideas concrete at once — the **SPSC lock-free ring** that carries events *across* threads (point 23), the
+**sharding** of instruments onto threads (points 11–13), and the **single-threaded, lock-free shard interior**
+where strategy state is touched by exactly one thread (point 14). One feed thread publishes book updates; each
+shard thread drains its own queue and processes sequentially.
+
+```cpp
+#include <array>
+#include <atomic>
+#include <cstdint>
+#include <iostream>
+#include <thread>
+
+using InstrumentId = uint32_t;
+
+struct BookUpdate {
+    InstrumentId instrument;
+    uint64_t sequence;
+
+    int bidPrice;
+    int bidQty;
+
+    int askPrice;
+    int askQty;
+};
+
+
+template <typename T, size_t N>
+class SPSCQueue {
+
+private:
+    std::array<T, N> buffer_;
+
+    std::atomic<size_t> head_{0};
+    std::atomic<size_t> tail_{0};
+
+public:
+
+    bool push(const T& event) {
+
+        // Only producer modifies tail.
+        size_t tail =
+            tail_.load(std::memory_order_relaxed);
+
+        size_t next = (tail + 1) % N;
+
+        // Check whether consumer has freed space.
+        if (next ==
+            head_.load(std::memory_order_acquire)) {
+
+            return false;
+        }
+
+        // Write event FIRST.
+        buffer_[tail] = event;
+
+        // THEN publish it.
+        tail_.store(next,
+                    std::memory_order_release);
+
+        return true;
+    }
+
+
+    bool pop(T& event) {
+
+        // Only consumer modifies head.
+        size_t head =
+            head_.load(std::memory_order_relaxed);
+
+        // Acquire the producer's published tail.
+        if (head ==
+            tail_.load(std::memory_order_acquire)) {
+
+            return false;
+        }
+
+        // Now it is safe to read.
+        event = buffer_[head];
+
+        // Publish that we consumed the slot.
+        head_.store((head + 1) % N,
+                    std::memory_order_release);
+
+        return true;
+    }
+};
+
+
+struct Shard {
+
+    SPSCQueue<BookUpdate, 1024> queue;
+
+    // Owned exclusively by shard thread.
+    int position = 0;
+
+    void process(const BookUpdate& event) {
+
+        std::cout
+            << "Thread "
+            << std::this_thread::get_id()
+            << " processing instrument "
+            << event.instrument
+            << " seq "
+            << event.sequence
+            << '\n';
+
+        // Strategy logic happens here.
+        // No mutex.
+        // No atomic position.
+    }
+};
+
+
+constexpr size_t NUM_SHARDS = 2;
+
+std::array<Shard, NUM_SHARDS> shards;
+
+
+size_t shardFor(InstrumentId instrument) {
+    return instrument % NUM_SHARDS;
+}
+
+
+// FEED THREAD
+void feedHandler() {
+
+    for (uint64_t seq = 1; seq <= 100; ++seq) {
+
+        BookUpdate event{
+            .instrument = static_cast<InstrumentId>(seq % 6),
+            .sequence = seq,
+
+            .bidPrice = 100,
+            .bidQty = 500,
+
+            .askPrice = 101,
+            .askQty = 300
+        };
+
+        size_t shardId =
+            shardFor(event.instrument);
+
+        // Cross-thread publish.
+        shards[shardId].queue.push(event);
+    }
+}
+
+
+// SHARD THREAD
+void shardThread(size_t shardId) {
+
+    Shard& shard = shards[shardId];
+
+    while (true) {
+
+        BookUpdate event;
+
+        if (shard.queue.pop(event)) {
+
+            // Sequential processing.
+            shard.process(event);
+        }
+    }
+}
+
+
+int main() {
+
+    std::thread feed(feedHandler);
+
+    std::thread shard0(
+        shardThread,
+        0
+    );
+
+    std::thread shard1(
+        shardThread,
+        1
+    );
+
+    feed.join();
+
+    shard0.join();
+    shard1.join();
+}
+```
+
+Read it against the theory:
+
+- **`SPSCQueue` is the *only* place atomics appear.** It is the cross-thread boundary from point 23 — one
+  producer (the feed), one consumer (a shard). `push` writes the payload *then* `store`s `tail_` with
+  `release`; `pop` `load`s `tail_` with `acquire` *then* reads — the acquire/release pair is what guarantees
+  the shard sees a fully-written `BookUpdate`, never a half-written one. Single-producer/single-consumer is
+  what lets each index be owned by exactly one thread, so no compare-and-swap is needed.
+- **`shardFor` is the routing table from points 9 and 11.** Here it's just `instrument % NUM_SHARDS`; in the
+  real engine it's a precomputed instrument→shard map, and correlated instruments (the pairs-strategy rule,
+  point 15) must hash to the same shard.
+- **`Shard::position` has no lock and no `std::atomic`** — that's point 14 made literal. Only the shard's own
+  thread ever touches it, so `position += …` is a plain add. This is the biggest single performance win and
+  the whole reason for the single-thread-per-shard design.
+- **The `while (true)` spin in `shardThread`** is a busy-poll — appropriate on a pinned core in HFT (you trade
+  a burned core for the lowest possible wake-up latency), but note it never terminates here, so this toy
+  program's shard threads run forever after the feed finishes. In production you'd pin the thread to a core,
+  and gate the loop on a shutdown flag.
+
+Two honest caveats about the snippet as written: `feedHandler` ignores the `bool` from `push`, so if a queue
+filled it would silently drop events (fine at 100 events into a 1024-slot ring; a real feed handler must
+handle backpressure). And because the shard loops never exit, `join()` on them would block forever — the
+program illustrates the data path, not clean shutdown. Both are deliberately out of scope so the core idea —
+*lock-free across threads, lock-free-because-single-threaded within a shard* — stays front and center.
+
 ## 4.3 The same reasoning, compressed (for the interview)
 
 The 25 points above are the build; here's the tight version to *say out loud*. Drive it top-down; each
